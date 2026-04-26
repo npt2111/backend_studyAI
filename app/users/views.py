@@ -16,6 +16,35 @@ from config.services.supabase_client import SupabaseConfigError
 from .serializers import LoginSerializer, RefreshTokenSerializer, RegisterSerializer
 
 
+def _extract_first_error(errors) -> str:
+    if isinstance(errors, dict):
+        for value in errors.values():
+            if isinstance(value, list) and value:
+                return str(value[0])
+            if isinstance(value, dict):
+                nested = _extract_first_error(value)
+                if nested:
+                    return nested
+            if isinstance(value, str):
+                return value
+    elif isinstance(errors, list) and errors:
+        return str(errors[0])
+    elif isinstance(errors, str):
+        return errors
+    return "Du lieu khong hop le."
+
+
+def _serializer_error_response(serializer, fallback_message: str = "Du lieu khong hop le."):
+    message = _extract_first_error(serializer.errors) or fallback_message
+    return Response(
+        {
+            "message": message,
+            "errors": serializer.errors,
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
 def _extract_profile(row: Dict) -> Dict:
     if not row:
         return {"id": None, "email": None, "full_name": ""}
@@ -108,7 +137,8 @@ class RegisterApiView(APIView):
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Du lieu dang ky khong hop le.")
         data = serializer.validated_data
 
         email = data["email"].strip().lower()
@@ -120,7 +150,10 @@ class RegisterApiView(APIView):
                 return error_response
             if existed:
                 return Response(
-                    {"message": "Email da ton tai."},
+                    {
+                        "message": "Email da ton tai.",
+                        "errors": {"email": ["Email da ton tai."]},
+                    },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -176,7 +209,8 @@ class LoginApiView(APIView):
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Du lieu dang nhap khong hop le.")
         data = serializer.validated_data
 
         email = data["email"].strip().lower()
@@ -194,22 +228,23 @@ class LoginApiView(APIView):
 
         if not user_row:
             return Response(
-                {"message": "Email hoac mat khau khong dung."},
+                {
+                    "message": "Email hoac mat khau khong dung.",
+                    "errors": {"email": ["Email hoac mat khau khong dung."]},
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         stored_password = user_row.get("password_user") or ""
-        valid_password = False
-        if stored_password:
-            # Ho tro du lieu cu luu plaintext, uu tien hash.
-            if stored_password.startswith("pbkdf2_"):
-                valid_password = check_password(raw_password, stored_password)
-            else:
-                valid_password = stored_password == raw_password
+        # Password trong bang public.user duoc luu hash boi Django make_password.
+        valid_password = bool(stored_password) and check_password(raw_password, stored_password)
 
         if not valid_password:
             return Response(
-                {"message": "Email hoac mat khau khong dung."},
+                {
+                    "message": "Email hoac mat khau khong dung.",
+                    "errors": {"email": ["Email hoac mat khau khong dung."]},
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -277,7 +312,8 @@ class RefreshTokenApiView(APIView):
 
     def post(self, request):
         serializer = RefreshTokenSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Refresh token khong hop le.")
         refresh_token = serializer.validated_data["refresh_token"]
 
         try:
