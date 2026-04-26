@@ -11,6 +11,16 @@ API
 - GET  /api/users/me/ (Bearer access token)
 - POST /api/users/token/refresh/
 
+ENV CAN CO
+- SUPABASE_URL
+- SUPABASE_KEY (service role key, chi dung o backend)
+
+SUPABASE TABLE (public.user) GOI Y
+- id uuid primary key references auth.users(id)
+- email text unique not null
+- full_name text
+- created_at timestamptz default now()
+
 RENDER
 - buildCommand: ./build.sh
 - startCommand: gunicorn config.wsgi:application
