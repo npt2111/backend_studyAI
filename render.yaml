@@ -8,7 +8,7 @@ services:
     autoDeploy: true
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.9
+        value: 3.10.0
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings
       - key: SECRET_KEY
@@ -17,3 +17,7 @@ services:
         value: false
       - key: CORS_ALLOW_ALL_ORIGINS
         value: true
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
