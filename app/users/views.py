@@ -1,3 +1,10 @@
+from datetime import datetime, timedelta, timezone
+from typing import Dict
+
+import jwt
+from django.conf import settings
+from django.contrib.auth.hashers import check_password, make_password
+from jwt import ExpiredSignatureError, InvalidTokenError
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -9,46 +16,58 @@ from config.services.supabase_client import SupabaseConfigError
 from .serializers import LoginSerializer, RefreshTokenSerializer, RegisterSerializer
 
 
-def _extract_auth_payload(payload):
-    user = payload.get("user") or payload.get("session", {}).get("user") or {}
-    access = payload.get("access_token") or payload.get("session", {}).get("access_token")
-    refresh = payload.get("refresh_token") or payload.get("session", {}).get("refresh_token")
-    user_metadata = user.get("user_metadata") or {}
-    full_name = (
-        user_metadata.get("full_name")
-        or user_metadata.get("name")
-        or user.get("email")
-        or ""
-    )
+def _extract_profile(row: Dict) -> Dict:
+    if not row:
+        return {"id": None, "email": None, "full_name": ""}
     return {
-        "user": {
-            "id": user.get("id"),
-            "email": user.get("email"),
-            "full_name": full_name,
-        },
-        "tokens": {
-            "access": access,
-            "refresh": refresh,
-        },
+        "id": row.get("id_user"),
+        "email": row.get("email_user"),
+        "full_name": row.get("full_name_user") or "",
     }
 
 
-def _extract_profile(payload):
-    if not payload:
-        return {
-            "id": None,
-            "email": None,
-            "full_name": "",
-        }
+def _jwt_secret() -> str:
+    return getattr(settings, "JWT_SECRET", settings.SECRET_KEY)
+
+
+def _jwt_algorithm() -> str:
+    return getattr(settings, "JWT_ALGORITHM", "HS256")
+
+
+def _create_tokens(user_profile: Dict) -> Dict:
+    now = datetime.now(timezone.utc)
+    user_id = user_profile["id"]
+    email = user_profile.get("email")
+
+    access_minutes = getattr(settings, "ACCESS_TOKEN_MINUTES", 60 * 24 * 7)
+    refresh_days = getattr(settings, "REFRESH_TOKEN_DAYS", 30)
+
+    access_payload = {
+        "sub": user_id,
+        "email": email,
+        "type": "access",
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=access_minutes)).timestamp()),
+    }
+    refresh_payload = {
+        "sub": user_id,
+        "email": email,
+        "type": "refresh",
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(days=refresh_days)).timestamp()),
+    }
 
     return {
-        "id": payload.get("id") or payload.get("user_id"),
-        "email": payload.get("email"),
-        "full_name": payload.get("full_name")
-        or payload.get("name")
-        or payload.get("display_name")
-        or "",
+        "access": jwt.encode(access_payload, _jwt_secret(), algorithm=_jwt_algorithm()),
+        "refresh": jwt.encode(refresh_payload, _jwt_secret(), algorithm=_jwt_algorithm()),
     }
+
+
+def _decode_token(token: str, token_type: str) -> Dict:
+    payload = jwt.decode(token, _jwt_secret(), algorithms=[_jwt_algorithm()])
+    if payload.get("type") != token_type:
+        raise InvalidTokenError("Token type khong hop le.")
+    return payload
 
 
 def _bearer_token(request):
@@ -56,6 +75,31 @@ def _bearer_token(request):
     if not auth_header.startswith("Bearer "):
         return None
     return auth_header.replace("Bearer ", "", 1).strip()
+
+
+def _read_user_by_email(email: str):
+    user_row, user_status = supabase_client.get_user_by_email(email)
+    if user_status >= 400:
+        return None, Response(
+            {"message": "Khong doc duoc user table.", "error": user_row},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+    return user_row, None
+
+
+def _read_user_by_id(user_id: str):
+    user_row, user_status = supabase_client.get_user_by_id(user_id)
+    if user_status >= 400:
+        return None, Response(
+            {"message": "Khong doc duoc user table.", "error": user_row},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+    if not user_row:
+        return None, Response(
+            {"message": "Nguoi dung khong ton tai."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    return user_row, None
 
 
 class RegisterApiView(APIView):
@@ -67,58 +111,60 @@ class RegisterApiView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        email = data["email"].lower().strip()
+        email = data["email"].strip().lower()
         full_name = data.get("full_name", "").strip()
 
         try:
-            signup_payload, signup_status = supabase_client.signup(
-                email=email,
-                password=data["password"],
+            existed, error_response = _read_user_by_email(email)
+            if error_response:
+                return error_response
+            if existed:
+                return Response(
+                    {"message": "Email da ton tai."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            password_hash = make_password(data["password"])
+            created_row, created_status = supabase_client.create_user(
                 full_name=full_name,
+                email=email,
+                password_hash=password_hash,
+                phone=data.get("phone", "").strip(),
+                address=data.get("address", "").strip(),
+                birthday=(str(data["birthday"]) if data.get("birthday") else ""),
             )
         except SupabaseConfigError as exc:
-            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        if signup_status >= 400:
             return Response(
-                {
-                    "message": "Dang ky that bai.",
-                    "error": signup_payload,
-                },
-                status=signup_status,
+                {"message": str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        mapped = _extract_auth_payload(signup_payload)
-
-        # Truong hop Supabase signup chua tra session (vi bat email confirm)
-        if not mapped["tokens"]["access"] or not mapped["tokens"]["refresh"]:
-            login_payload, login_status = supabase_client.login(
-                email=email,
-                password=data["password"],
+        if created_status >= 400:
+            return Response(
+                {"message": "Dang ky that bai.", "error": created_row},
+                status=status.HTTP_502_BAD_GATEWAY,
             )
-            if login_status < 400:
-                mapped = _extract_auth_payload(login_payload)
 
-        profile = mapped["user"]
-        user_id = mapped["user"].get("id")
+        profile = _extract_profile(created_row)
+        if not profile.get("id"):
+            # Neu Supabase khong tra row do cau hinh RLS/Prefer, doc lai theo email.
+            refetched, error_response = _read_user_by_email(email)
+            if error_response:
+                return error_response
+            profile = _extract_profile(refetched)
 
-        if user_id:
-            profile_payload, profile_status = supabase_client.upsert_profile(
-                user_id=user_id,
-                email=email,
-                full_name=full_name,
+        if not profile.get("id"):
+            return Response(
+                {"message": "Dang ky thanh cong nhung khong lay duoc id_user."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-            if profile_status < 400:
-                profile = _extract_profile(profile_payload)
-            else:
-                # Dang ky auth thanh cong, nhung profile table chua dong bo duoc.
-                profile["profile_sync_error"] = profile_payload
 
+        tokens = _create_tokens(profile)
         return Response(
             {
                 "message": "Dang ky thanh cong.",
                 "user": profile,
-                "tokens": mapped["tokens"],
+                "tokens": tokens,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -133,43 +179,53 @@ class LoginApiView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
+        email = data["email"].strip().lower()
+        raw_password = data["password"]
+
         try:
-            payload, supabase_status = supabase_client.login(
-                email=data["email"].lower().strip(),
-                password=data["password"],
-            )
+            user_row, error_response = _read_user_by_email(email)
+            if error_response:
+                return error_response
         except SupabaseConfigError as exc:
-            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        if supabase_status >= 400:
             return Response(
-                {
-                    "message": "Dang nhap that bai.",
-                    "error": payload,
-                },
-                status=supabase_status,
+                {"message": str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        mapped = _extract_auth_payload(payload)
-        profile = mapped["user"]
+        if not user_row:
+            return Response(
+                {"message": "Email hoac mat khau khong dung."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        user_id = mapped["user"].get("id")
-        if user_id:
-            profile_payload, profile_status = supabase_client.get_profile_by_auth_id(user_id)
-            if profile_status < 400 and profile_payload:
-                profile = _extract_profile(profile_payload)
+        stored_password = user_row.get("password_user") or ""
+        valid_password = False
+        if stored_password:
+            # Ho tro du lieu cu luu plaintext, uu tien hash.
+            if stored_password.startswith("pbkdf2_"):
+                valid_password = check_password(raw_password, stored_password)
             else:
-                profile_payload, profile_status = supabase_client.get_profile_by_email(
-                    mapped["user"].get("email", "")
-                )
-                if profile_status < 400 and profile_payload:
-                    profile = _extract_profile(profile_payload)
+                valid_password = stored_password == raw_password
 
+        if not valid_password:
+            return Response(
+                {"message": "Email hoac mat khau khong dung."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        profile = _extract_profile(user_row)
+        if not profile.get("id"):
+            return Response(
+                {"message": "User data khong hop le (thieu id_user)."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        tokens = _create_tokens(profile)
         return Response(
             {
                 "message": "Dang nhap thanh cong.",
                 "user": profile,
-                "tokens": mapped["tokens"],
+                "tokens": tokens,
             },
             status=status.HTTP_200_OK,
         )
@@ -188,38 +244,31 @@ class MeApiView(APIView):
             )
 
         try:
-            payload, supabase_status = supabase_client.get_user(access_token=token)
-        except SupabaseConfigError as exc:
-            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            payload = _decode_token(token, "access")
+            user_id = payload.get("sub")
+            if not user_id:
+                raise InvalidTokenError("Token khong co sub.")
 
-        if supabase_status >= 400:
+            user_row, error_response = _read_user_by_id(user_id)
+            if error_response:
+                return error_response
+        except ExpiredSignatureError:
             return Response(
-                {"message": "Token khong hop le.", "error": payload},
+                {"message": "Access token het han."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
+        except InvalidTokenError as exc:
+            return Response(
+                {"message": f"Access token khong hop le: {exc}"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except SupabaseConfigError as exc:
+            return Response(
+                {"message": str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
-        user_id = payload.get("id")
-        email = payload.get("email")
-        user_metadata = payload.get("user_metadata") or {}
-        profile = {
-            "id": user_id,
-            "email": email,
-            "full_name": user_metadata.get("full_name") or user_metadata.get("name") or "",
-        }
-
-        if user_id:
-            profile_payload, profile_status = supabase_client.get_profile_by_auth_id(user_id)
-            if profile_status < 400 and profile_payload:
-                profile = _extract_profile(profile_payload)
-            elif email:
-                profile_payload, profile_status = supabase_client.get_profile_by_email(email)
-                if profile_status < 400 and profile_payload:
-                    profile = _extract_profile(profile_payload)
-
-        return Response(
-            profile,
-            status=status.HTTP_200_OK,
-        )
+        return Response(_extract_profile(user_row), status=status.HTTP_200_OK)
 
 
 class RefreshTokenApiView(APIView):
@@ -232,34 +281,42 @@ class RefreshTokenApiView(APIView):
         refresh_token = serializer.validated_data["refresh_token"]
 
         try:
-            payload, supabase_status = supabase_client.refresh_session(refresh_token=refresh_token)
-        except SupabaseConfigError as exc:
-            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            payload = _decode_token(refresh_token, "refresh")
+            user_id = payload.get("sub")
+            if not user_id:
+                raise InvalidTokenError("Refresh token khong co sub.")
 
-        if supabase_status >= 400:
+            user_row, error_response = _read_user_by_id(user_id)
+            if error_response:
+                return error_response
+        except ExpiredSignatureError:
             return Response(
-                {"message": "Refresh token that bai.", "error": payload},
-                status=supabase_status,
+                {"message": "Refresh token het han."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except InvalidTokenError as exc:
+            return Response(
+                {"message": f"Refresh token khong hop le: {exc}"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except SupabaseConfigError as exc:
+            return Response(
+                {"message": str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        mapped = _extract_auth_payload(payload)
-        profile = mapped["user"]
-        user_id = mapped["user"].get("id")
-        if user_id:
-            profile_payload, profile_status = supabase_client.get_profile_by_auth_id(user_id)
-            if profile_status < 400 and profile_payload:
-                profile = _extract_profile(profile_payload)
-            else:
-                profile_payload, profile_status = supabase_client.get_profile_by_email(
-                    mapped["user"].get("email", "")
-                )
-                if profile_status < 400 and profile_payload:
-                    profile = _extract_profile(profile_payload)
+        profile = _extract_profile(user_row)
+        if not profile.get("id"):
+            return Response(
+                {"message": "User data khong hop le (thieu id_user)."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
+        tokens = _create_tokens(profile)
         return Response(
             {
                 "message": "Lam moi token thanh cong.",
-                "tokens": mapped["tokens"],
+                "tokens": tokens,
                 "user": profile,
             },
             status=status.HTTP_200_OK,

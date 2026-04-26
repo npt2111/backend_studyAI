@@ -14,12 +14,17 @@ API
 ENV CAN CO
 - SUPABASE_URL
 - SUPABASE_KEY (service role key, chi dung o backend)
+- JWT_SECRET
+- JWT_ALGORITHM (mac dinh HS256)
 
-SUPABASE TABLE (public.user) GOI Y
-- id uuid primary key references auth.users(id)
-- email text unique not null
-- full_name text
-- created_at timestamptz default now()
+DUNG TABLE CUSTOM (KHONG SUPABASE AUTH)
+- id_user uuid primary key
+- full_name_user text
+- email_user text
+- password_user text (luu hash)
+- phone_user text
+- address_user text
+- birthday_user date
 
 RENDER
 - buildCommand: ./build.sh
