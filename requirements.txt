@@ -1,0 +1,9 @@
+Django==4.2
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+requests
+python-dotenv
+djangorestframework-simplejwt
+dj-database-url==2.2.0
+gunicorn==22.0.0
+

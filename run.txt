@@ -1,0 +1,18 @@
+LOCAL RUN
+1) python -m venv venv
+2) venv\Scripts\activate
+3) pip install -r requirements.txt
+4) python manage.py migrate
+5) python manage.py runserver 0.0.0.0:8000
+
+API
+- POST /api/users/register/
+- POST /api/users/login/
+- GET  /api/users/me/ (Bearer access token)
+- POST /api/users/token/refresh/
+
+RENDER
+- buildCommand: ./build.sh
+- startCommand: gunicorn config.wsgi:application
+
+ 

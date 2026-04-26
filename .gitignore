@@ -1,0 +1,48 @@
+# ======================
+# Python
+# ======================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+db.sqlite3
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Environment variables (QUAN TRỌNG)
+.env
+
+# Django
+*.log
+media/
+staticfiles/
+*.pot
+*.mo
+
+# VS Code
+.vscode/
+
+# PyCharm
+.idea/
+
+# ======================
+# Android
+# ======================
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+
+# ======================
+# Supabase
+# ======================
+supabase/.temp
+supabase/.branches
