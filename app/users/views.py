@@ -197,6 +197,9 @@ class RegisterApiView(APIView):
             {
                 "message": "Dang ky thanh cong.",
                 "user": profile,
+                "id_user": profile.get("id"),
+                "email_user": profile.get("email"),
+                "full_name_user": profile.get("full_name"),
                 "tokens": tokens,
             },
             status=status.HTTP_201_CREATED,
@@ -260,6 +263,9 @@ class LoginApiView(APIView):
             {
                 "message": "Dang nhap thanh cong.",
                 "user": profile,
+                "id_user": profile.get("id"),
+                "email_user": profile.get("email"),
+                "full_name_user": profile.get("full_name"),
                 "tokens": tokens,
             },
             status=status.HTTP_200_OK,
@@ -354,6 +360,9 @@ class RefreshTokenApiView(APIView):
                 "message": "Lam moi token thanh cong.",
                 "tokens": tokens,
                 "user": profile,
+                "id_user": profile.get("id"),
+                "email_user": profile.get("email"),
+                "full_name_user": profile.get("full_name"),
             },
             status=status.HTTP_200_OK,
         )
