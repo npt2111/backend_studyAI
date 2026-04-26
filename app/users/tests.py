@@ -1,20 +1,34 @@
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+import jwt
+from django.conf import settings
+from django.contrib.auth.hashers import make_password
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 
 class UsersAuthApiTests(APITestCase):
-    def test_register_success(self):
-        mocked_signup = {
-            "user": {"id": "uid-1", "email": "student@example.com", "user_metadata": {"full_name": "Student One"}},
-            "access_token": "access-token",
-            "refresh_token": "refresh-token",
+    def _make_access_token(self, user_id: str, email: str) -> str:
+        payload = {
+            "sub": user_id,
+            "email": email,
+            "type": "access",
+            "iat": int(datetime.now(timezone.utc).timestamp()),
+            "exp": int((datetime.now(timezone.utc) + timedelta(minutes=60)).timestamp()),
         }
-        mocked_profile = {
-            "id": "uid-1",
-            "email": "student@example.com",
-            "full_name": "Student One",
+        return jwt.encode(
+            payload,
+            getattr(settings, "JWT_SECRET", settings.SECRET_KEY),
+            algorithm=getattr(settings, "JWT_ALGORITHM", "HS256"),
+        )
+
+    def test_register_success(self):
+        created_row = {
+            "id_user": "uid-1",
+            "email_user": "student@example.com",
+            "full_name_user": "Student One",
+            "password_user": "hashed",
         }
         payload = {
             "email": "student@example.com",
@@ -22,32 +36,25 @@ class UsersAuthApiTests(APITestCase):
             "full_name": "Student One",
         }
 
-        with patch("app.users.views.supabase_client.signup", return_value=(mocked_signup, 200)), patch(
-            "app.users.views.supabase_client.upsert_profile", return_value=(mocked_profile, 201)
+        with patch("app.users.views.supabase_client.get_user_by_email", return_value=({}, 200)), patch(
+            "app.users.views.supabase_client.create_user", return_value=(created_row, 201)
         ):
             response = self.client.post("/api/users/register/", payload, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIn("tokens", response.data)
-        self.assertEqual(response.data["tokens"]["access"], "access-token")
+        self.assertTrue(response.data["tokens"]["access"])
         self.assertEqual(response.data["user"]["full_name"], "Student One")
 
     def test_login_success(self):
-        mocked_login = {
-            "user": {"id": "uid-2", "email": "student@example.com"},
-            "access_token": "access-token",
-            "refresh_token": "refresh-token",
-        }
-        mocked_profile = {
-            "id": "uid-2",
-            "email": "student@example.com",
-            "full_name": "Student One",
+        user_row = {
+            "id_user": "uid-2",
+            "email_user": "student@example.com",
+            "full_name_user": "Student One",
+            "password_user": make_password("mypassword123"),
         }
 
-        with patch("app.users.views.supabase_client.login", return_value=(mocked_login, 200)), patch(
-            "app.users.views.supabase_client.get_profile_by_auth_id",
-            return_value=(mocked_profile, 200),
-        ):
+        with patch("app.users.views.supabase_client.get_user_by_email", return_value=(user_row, 200)):
             response = self.client.post(
                 "/api/users/login/",
                 {"email": "student@example.com", "password": "mypassword123"},
@@ -56,7 +63,7 @@ class UsersAuthApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("tokens", response.data)
-        self.assertEqual(response.data["tokens"]["access"], "access-token")
+        self.assertTrue(response.data["tokens"]["access"])
         self.assertEqual(response.data["user"]["full_name"], "Student One")
 
     def test_me_requires_authentication(self):
@@ -64,23 +71,16 @@ class UsersAuthApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_me_success(self):
-        mocked_user = {
-            "id": "uid-3",
-            "email": "student@example.com",
-            "user_metadata": {"full_name": "Student One"},
+        token = self._make_access_token("uid-3", "student@example.com")
+        user_row = {
+            "id_user": "uid-3",
+            "email_user": "student@example.com",
+            "full_name_user": "Student One",
         }
-        mocked_profile = {
-            "id": "uid-3",
-            "email": "student@example.com",
-            "full_name": "Student One",
-        }
-        with patch("app.users.views.supabase_client.get_user", return_value=(mocked_user, 200)), patch(
-            "app.users.views.supabase_client.get_profile_by_auth_id",
-            return_value=(mocked_profile, 200),
-        ):
+        with patch("app.users.views.supabase_client.get_user_by_id", return_value=(user_row, 200)):
             response = self.client.get(
                 "/api/users/me/",
-                HTTP_AUTHORIZATION="Bearer access-token",
+                HTTP_AUTHORIZATION=f"Bearer {token}",
             )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)

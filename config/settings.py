@@ -131,6 +131,11 @@ REST_FRAMEWORK = {
     ),
 }
 
+JWT_SECRET = os.getenv("JWT_SECRET", SECRET_KEY)
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+ACCESS_TOKEN_MINUTES = int(os.getenv("ACCESS_TOKEN_MINUTES", "10080"))  # 7 days
+REFRESH_TOKEN_DAYS = int(os.getenv("REFRESH_TOKEN_DAYS", "30"))
+
 # CORS for Kotlin app and local testing
 CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", True)
 CORS_ALLOWED_ORIGINS = [
