@@ -6,7 +6,8 @@ from typing import Dict, List
 
 from django.conf import settings
 from docx import Document
-from openai import OpenAI
+from google import genai
+from google.genai import types
 from pypdf import PdfReader
 
 from config.services import supabase_client
@@ -101,35 +102,38 @@ def _chunk_text(text: str, max_chars: int) -> List[str]:
     return chunks
 
 
-def _openai_client() -> OpenAI:
-    api_key = getattr(settings, "OPENAI_API_KEY", "").strip()
+def _gemini_client() -> genai.Client:
+    api_key = getattr(settings, "GEMINI_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY chua duoc cau hinh.")
-    return OpenAI(api_key=api_key)
+        raise RuntimeError("GEMINI_API_KEY chua duoc cau hinh.")
+    return genai.Client(api_key=api_key)
 
 
-def _chat(client: OpenAI, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
-    model = getattr(settings, "OPENAI_MODEL", "gpt-4o-mini")
-    response = client.chat.completions.create(
+def _chat(client: genai.Client, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
+    model = getattr(settings, "GEMINI_MODEL", "gemini-2.0-flash")
+    response = client.models.generate_content(
         model=model,
-        temperature=0.2,
-        max_tokens=max_tokens,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+        contents=user_prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=0.2,
+            max_output_tokens=max_tokens,
+        ),
     )
-    content = response.choices[0].message.content if response.choices else ""
-    if isinstance(content, list):
-        texts = []
-        for p in content:
-            t = getattr(p, "text", None)
-            if t:
-                texts.append(t)
-        content = "\n".join(texts)
-    content = str(content or "").strip()
+
+    content = str(getattr(response, "text", "") or "").strip()
     if not content:
-        raise RuntimeError("OpenAI tra ve noi dung rong.")
+        texts: List[str] = []
+        for candidate in getattr(response, "candidates", []) or []:
+            parts = getattr(getattr(candidate, "content", None), "parts", None) or []
+            for part in parts:
+                part_text = getattr(part, "text", None)
+                if part_text:
+                    texts.append(str(part_text).strip())
+        content = "\n".join([t for t in texts if t]).strip()
+
+    if not content:
+        raise RuntimeError("Gemini tra ve noi dung rong.")
     return content
 
 
@@ -176,7 +180,7 @@ def process_summary_job(job_id: str) -> None:
         if not chunks:
             raise RuntimeError("Khong tach duoc chunk.")
 
-        client = _openai_client()
+        client = _gemini_client()
         part_summaries: List[str] = []
 
         total = len(chunks)
