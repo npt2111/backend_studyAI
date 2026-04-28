@@ -5,6 +5,7 @@ LOCAL RUN
 4) python manage.py migrate
 5) python manage.py runserver 0.0.0.0:8000
 
+//backend deloy render
 API
 - POST /api/users/register/
 - POST /api/users/login/

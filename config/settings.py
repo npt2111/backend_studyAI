@@ -57,6 +57,8 @@ INSTALLED_APPS = [
     'app.quiz',
     'app.planner',
     'app.analytics',
+    'app.documents',
+
 ]
 
 MIDDLEWARE = [
@@ -143,3 +145,12 @@ CORS_ALLOWED_ORIGINS = [
     for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
     if origin.strip()
 ]
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "study-documents")
+SUMMARY_MAX_FILE_MB = int(os.getenv("SUMMARY_MAX_FILE_MB", "20"))
+SUMMARY_CHUNK_CHARS = int(os.getenv("SUMMARY_CHUNK_CHARS", "6000"))
+SUMMARY_MAX_SOURCE_CHARS = int(os.getenv("SUMMARY_MAX_SOURCE_CHARS", "300000"))
+SUMMARY_WORKER_THREADS = int(os.getenv("SUMMARY_WORKER_THREADS", "2"))
