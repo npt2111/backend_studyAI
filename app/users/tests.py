@@ -3,7 +3,6 @@ from unittest.mock import patch
 
 import jwt
 from django.conf import settings
-from django.contrib.auth.hashers import make_password
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -51,7 +50,7 @@ class UsersAuthApiTests(APITestCase):
             "id_user": "uid-2",
             "email_user": "student@example.com",
             "full_name_user": "Student One",
-            "password_user": make_password("mypassword123"),
+            "password_user": "mypassword123",
         }
 
         with patch("app.users.views.supabase_client.get_user_by_email", return_value=(user_row, 200)):

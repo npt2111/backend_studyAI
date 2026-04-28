@@ -3,7 +3,6 @@ from typing import Dict
 
 import jwt
 from django.conf import settings
-from django.contrib.auth.hashers import check_password, make_password
 from jwt import ExpiredSignatureError, InvalidTokenError
 from rest_framework import status
 from rest_framework.permissions import AllowAny
@@ -131,6 +130,21 @@ def _read_user_by_id(user_id: str):
     return user_row, None
 
 
+def _is_duplicate_email_error(payload: Dict) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    code = str(payload.get("code", "")).strip()
+    message = str(payload.get("message", "")).lower()
+    details = str(payload.get("details", "")).lower()
+    if code == "23505":
+        return True
+    if "duplicate key value" in message:
+        return True
+    if "email_user" in message or "email_user" in details:
+        return True
+    return False
+
+
 class RegisterApiView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -151,17 +165,17 @@ class RegisterApiView(APIView):
             if existed:
                 return Response(
                     {
-                        "message": "Email da ton tai.",
-                        "errors": {"email": ["Email da ton tai."]},
+                        "message": "Email da ton tai. Vui long dung email khac.",
+                        "errors": {"email": ["Email da ton tai. Vui long dung email khac."]},
                     },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            password_hash = make_password(data["password"])
+            password_value = data["password"]
             created_row, created_status = supabase_client.create_user(
                 full_name=full_name,
                 email=email,
-                password_hash=password_hash,
+                password_value=password_value,
                 phone=data.get("phone", "").strip(),
                 address=data.get("address", "").strip(),
                 birthday=(str(data["birthday"]) if data.get("birthday") else ""),
@@ -170,6 +184,15 @@ class RegisterApiView(APIView):
             return Response(
                 {"message": str(exc)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        if _is_duplicate_email_error(created_row):
+            return Response(
+                {
+                    "message": "Email da ton tai. Vui long dung email khac.",
+                    "errors": {"email": ["Email da ton tai. Vui long dung email khac."]},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         if created_status >= 400:
@@ -239,8 +262,7 @@ class LoginApiView(APIView):
             )
 
         stored_password = user_row.get("password_user") or ""
-        # Password trong bang public.user duoc luu hash boi Django make_password.
-        valid_password = bool(stored_password) and check_password(raw_password, stored_password)
+        valid_password = bool(stored_password) and (stored_password == raw_password)
 
         if not valid_password:
             return Response(
