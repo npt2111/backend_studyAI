@@ -110,7 +110,7 @@ def _gemini_client() -> genai.Client:
 
 
 def _chat(client: genai.Client, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
-    model = getattr(settings, "GEMINI_MODEL", "gemini-2.0-flash")
+    model = getattr(settings, "GEMINI_MODEL", "gemini-1.5-flash")
     response = client.models.generate_content(
         model=model,
         contents=user_prompt,
