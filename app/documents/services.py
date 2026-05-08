@@ -1,5 +1,6 @@
 import io
 import re
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
@@ -106,7 +107,11 @@ def normalize_job(row: Dict) -> Dict:
 
 
 def _cleanup_text(raw_text: str) -> str:
-    text = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+    text = unicodedata.normalize("NFKC", raw_text or "")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace("\u00ad", "")
+    text = text.replace("\ufeff", "")
+    text = re.sub(r"[^\S\n]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
     return text.strip()
@@ -122,8 +127,14 @@ def _extract_pdf_text(file_bytes: bytes) -> str:
 
 def _extract_docx_text(file_bytes: bytes) -> str:
     doc = Document(io.BytesIO(file_bytes))
-    paragraphs = [p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()]
-    return "\n\n".join(paragraphs)
+    blocks: List[str] = []
+    blocks.extend([p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()])
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells if cell.text and cell.text.strip()]
+            if cells:
+                blocks.append(" | ".join(cells))
+    return "\n\n".join(blocks)
 
 
 def _extract_text(file_name: str, mime_type: str, file_bytes: bytes) -> str:
@@ -167,6 +178,20 @@ def _chunk_text(text: str, max_chars: int) -> List[str]:
     return chunks
 
 
+def _validate_source_text(text: str) -> None:
+    words = text.split()
+    if len(words) < 80:
+        raise RuntimeError("Noi dung trich xuat qua ngan de tom tat day du.")
+
+    alpha_count = sum(1 for ch in text if ch.isalpha())
+    printable_count = sum(1 for ch in text if ch.isprintable())
+    if printable_count == 0 or (alpha_count / max(printable_count, 1)) < 0.25:
+        raise RuntimeError("Noi dung trich xuat chat luong thap (co the la PDF scan/loi font).")
+
+    if text.count("\ufffd") > 10:
+        raise RuntimeError("Noi dung trich xuat bi loi ky tu, khong the tom tat chinh xac.")
+
+
 def _gemini_client() -> genai.Client:
     api_key = getattr(settings, "GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -202,13 +227,26 @@ def _chat(client: genai.Client, system_prompt: str, user_prompt: str, max_tokens
     return content
 
 
+def _validate_summary_output(output: str) -> None:
+    lowered = output.lower()
+    banned_phrases = [
+        "tuyet voi",
+        "ban da co mot khoi dau rat tot",
+        "phan noi dung chinh cua tom tat van chua duoc cung cap",
+    ]
+    if any(phrase in lowered for phrase in banned_phrases):
+        raise RuntimeError("Tom tat khong dat chat luong (phan hoi chung chung).")
+    if "## tom_tat_theo_muc" not in lowered or "## cac_y_chinh_khong_bo_sot" not in lowered:
+        raise RuntimeError("Tom tat khong dung dinh dang bat buoc.")
+
+
 def _parse_key_points(raw: str) -> List[str]:
     lines = []
     for line in raw.splitlines():
-        cleaned = re.sub(r"^[-•\d\.\)\(]+\s*", "", line.strip())
+        cleaned = re.sub(r"^[^\w\[]+\s*", "", line.strip())
         if cleaned:
             lines.append(cleaned)
-    return lines[:8]
+    return lines[:20]
 
 
 def process_summary_job(job_id: str) -> None:
@@ -233,6 +271,7 @@ def process_summary_job(job_id: str) -> None:
         text = _cleanup_text(text)
         if not text:
             raise RuntimeError("Khong trich xuat duoc noi dung file.")
+        _validate_source_text(text)
 
         max_source_chars = int(getattr(settings, "SUMMARY_MAX_SOURCE_CHARS", 300000))
         if len(text) > max_source_chars:
@@ -268,6 +307,7 @@ def process_summary_job(job_id: str) -> None:
             user_prompt=merged,
             max_tokens=1200,
         )
+        _validate_summary_output(final_summary)
 
         raw_points = _chat(
             client=client,
@@ -276,6 +316,8 @@ def process_summary_job(job_id: str) -> None:
             max_tokens=700,
         )
         key_points = _parse_key_points(raw_points)
+        if not key_points:
+            raise RuntimeError("Khong trich duoc cac y chinh dat yeu cau.")
 
         supabase_client.update_summary_job(
             job_id,
@@ -300,3 +342,5 @@ def process_summary_job(job_id: str) -> None:
                 "error_message": str(exc)[:1000] if str(exc) else "Khong ro loi.",
             },
         )
+
+
