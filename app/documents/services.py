@@ -12,6 +12,71 @@ from pypdf import PdfReader
 
 from config.services import supabase_client
 
+CHUNK_SYSTEM_PROMPT = """
+Ban la tro ly tom tat hoc thuat tieng Viet.
+
+Muc tieu:
+- Tom tat DAY DU y chinh cua tai lieu dai.
+- TUYET DOI khong suy dien, khong them kien thuc ngoai van ban nguon.
+
+Quy tac bat buoc:
+1) Chi dung thong tin xuat hien trong van ban dau vao.
+2) Khong phong doan phan bi thieu.
+3) Neu doan nao khong du du lieu, ghi ro: [THIEU_DU_LIEU].
+4) Giu nguyen thuat ngu quan trong, ten chuong/muc neu co.
+5) Khong viet mo dau xa giao.
+
+Dinh dang dau ra:
+## TOM_TAT_THEO_MUC
+- Muc/Chuong 1: ...
+- Muc/Chuong 2: ...
+- ...
+
+## CAC_Y_CHINH_KHONG_BO_SOT
+- 10-20 gach dau dong (tuy do dai tai lieu), moi y 1-2 cau.
+- Moi y phai bam sat nguon, khong them dien giai ngoai van ban.
+
+## NOI_DUNG_CHUA_RO
+- Liet ke cac phan bi thieu/ngan/quet loi, neu co.
+""".strip()
+
+FINAL_SYSTEM_PROMPT = """
+Ban la tro ly tong hop tom tat hoc thuat tieng Viet.
+Ban se nhan nhieu ban tom tat tung phan cua cung mot tai lieu.
+
+Muc tieu:
+- Hop nhat day du y chinh cua toan bo tai lieu.
+- Khong bo sot y trong cac phan da cung cap.
+- TUYET DOI khong suy dien, khong them kien thuc ngoai du lieu dau vao.
+
+Quy tac:
+1) Chi tong hop tu noi dung da cho.
+2) Neu co noi dung mo ho/khuyet, ghi [THIEU_DU_LIEU] o muc NOI_DUNG_CHUA_RO.
+3) Khong viet mo dau xa giao.
+
+Dinh dang dau ra:
+## TOM_TAT_THEO_MUC
+- Muc/Chuong 1: ...
+- Muc/Chuong 2: ...
+- ...
+
+## CAC_Y_CHINH_KHONG_BO_SOT
+- 10-20 gach dau dong, moi y 1-2 cau, bam sat nguon.
+
+## NOI_DUNG_CHUA_RO
+- Liet ke cac phan bi thieu/ngan/quet loi, neu co.
+""".strip()
+
+KEYPOINTS_SYSTEM_PROMPT = """
+Trich cac y chinh quan trong nhat tu tom tat dau vao.
+Quy tac:
+- Chi dung thong tin co trong dau vao.
+- Khong suy dien, khong them thong tin moi.
+- Moi dong bat dau bang '- '.
+- Tra ve 10-20 dong.
+Neu khong du du lieu thi tra ve: [THIEU_DU_LIEU]
+""".strip()
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -187,11 +252,8 @@ def process_summary_job(job_id: str) -> None:
         for idx, chunk in enumerate(chunks, start=1):
             part = _chat(
                 client=client,
-                system_prompt=(
-                    "Ban la tro ly hoc tap. Tom tat ngan gon, ro rang, "
-                    "giu y chinh de sinh vien on tap."
-                ),
-                user_prompt=f"Tai lieu phan {idx}/{total}:\n\n{chunk}",
+                system_prompt=CHUNK_SYSTEM_PROMPT,
+                user_prompt=f"[PHAN {idx}/{total}]\n\n{chunk}",
                 max_tokens=900,
             )
             part_summaries.append(part)
@@ -202,16 +264,16 @@ def process_summary_job(job_id: str) -> None:
 
         final_summary = _chat(
             client=client,
-            system_prompt="Tong hop thanh ban tom tat cuoi cung de hoc nhanh, de doc.",
+            system_prompt=FINAL_SYSTEM_PROMPT,
             user_prompt=merged,
             max_tokens=1200,
         )
 
         raw_points = _chat(
             client=client,
-            system_prompt="Trich 5-8 y chinh, moi dong mot y, bat dau bang '- '.",
+            system_prompt=KEYPOINTS_SYSTEM_PROMPT,
             user_prompt=final_summary,
-            max_tokens=500,
+            max_tokens=700,
         )
         key_points = _parse_key_points(raw_points)
 
