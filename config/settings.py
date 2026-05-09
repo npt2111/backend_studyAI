@@ -148,7 +148,7 @@ CORS_ALLOWED_ORIGINS = [
 
 # Gemini config (co fallback tu bien cu OPENAI_* de de migrate)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", os.getenv("OPENAI_API_KEY", "")).strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", os.getenv("OPENAI_MODEL", "gemini-2.0-flash"))
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", os.getenv("OPENAI_MODEL", "gemini-2.5-flash"))
 
 SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "study-documents")
 SUMMARY_MAX_FILE_MB = int(os.getenv("SUMMARY_MAX_FILE_MB", "20"))
