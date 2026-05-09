@@ -181,6 +181,77 @@ def _chunk_text(text: str, max_chars: int) -> List[str]:
     return chunks
 
 
+def _extract_outline_headings(text: str) -> List[str]:
+    lines = [ln.strip() for ln in text.splitlines() if ln and ln.strip()]
+    headings: List[str] = []
+    patterns = [
+        r"^(chuong|chương)\s+\d+[\.: -].*",
+        r"^(muc|mục)\s+\d+[\.: -].*",
+        r"^\d+(\.\d+){0,3}\s+.+",
+        r"^[ivxlcdm]+\.\s+.+",
+    ]
+    for ln in lines:
+        low = ln.lower()
+        if any(re.match(p, low) for p in patterns):
+            headings.append(ln)
+    # unique + preserve order
+    seen = set()
+    result: List[str] = []
+    for h in headings:
+        key = h.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(h)
+    return result[:200]
+
+
+def _chunk_text_by_headings(text: str, max_chars: int) -> List[str]:
+    lines = text.splitlines()
+    heading_re = re.compile(
+        r"^((chuong|chương)\s+\d+[\.: -].*|(muc|mục)\s+\d+[\.: -].*|\d+(\.\d+){0,3}\s+.+|[ivxlcdm]+\.\s+.+)$",
+        flags=re.IGNORECASE,
+    )
+    sections: List[List[str]] = []
+    current: List[str] = []
+    for ln in lines:
+        stripped = ln.strip()
+        if stripped and heading_re.match(stripped):
+            if current:
+                sections.append(current)
+            current = [ln]
+        else:
+            if not current:
+                current = [ln]
+            else:
+                current.append(ln)
+    if current:
+        sections.append(current)
+
+    blocks = ["\n".join(sec).strip() for sec in sections if "\n".join(sec).strip()]
+    if not blocks:
+        return _chunk_text(text, max_chars=max_chars)
+
+    chunks: List[str] = []
+    current_chunk = ""
+    for block in blocks:
+        candidate = f"{current_chunk}\n\n{block}" if current_chunk else block
+        if len(candidate) <= max_chars:
+            current_chunk = candidate
+        else:
+            if current_chunk:
+                chunks.append(current_chunk)
+            if len(block) <= max_chars:
+                current_chunk = block
+            else:
+                # fallback for oversized section
+                chunks.extend(_chunk_text(block, max_chars=max_chars))
+                current_chunk = ""
+    if current_chunk:
+        chunks.append(current_chunk)
+    return chunks if chunks else _chunk_text(text, max_chars=max_chars)
+
+
 def _validate_source_text(text: str) -> None:
     words = text.split()
     if len(words) < 80:
@@ -311,6 +382,43 @@ def _repair_summary_format(client: genai.Client, summary_text: str) -> str:
     return _normalize_summary_sections(fixed)
 
 
+def _normalize_heading_for_match(s: str) -> str:
+    s = unicodedata.normalize("NFKD", s.lower())
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _coverage_audit(source_text: str, summary_text: str) -> Dict:
+    source_headings = _extract_outline_headings(source_text)
+    if not source_headings:
+        return {
+            "source_headings": [],
+            "matched_headings": [],
+            "missing_headings": [],
+            "coverage_ratio": 1.0,
+        }
+
+    summary_norm = _normalize_heading_for_match(summary_text)
+    matched: List[str] = []
+    missing: List[str] = []
+    for h in source_headings:
+        h_norm = _normalize_heading_for_match(h)
+        if h_norm and h_norm in summary_norm:
+            matched.append(h)
+        else:
+            missing.append(h)
+
+    ratio = len(matched) / max(1, len(source_headings))
+    return {
+        "source_headings": source_headings,
+        "matched_headings": matched,
+        "missing_headings": missing,
+        "coverage_ratio": ratio,
+    }
+
+
 def _parse_key_points(raw: str) -> List[str]:
     lines = []
     for line in raw.splitlines():
@@ -320,6 +428,31 @@ def _parse_key_points(raw: str) -> List[str]:
     return lines[:24]
 
 
+def _sanitize_summary_text(summary_text: str) -> str:
+    text = (summary_text or "").strip()
+    # Bo ky hieu markdown gay roi khi render mobile.
+    text = text.replace("**", "")
+    # Loai bo token he thong/placeholder.
+    text = re.sub(r"\[THIEU_DU_LIEU\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\berror\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _sanitize_key_points(points: List[str]) -> List[str]:
+    cleaned_points: List[str] = []
+    for p in points:
+        t = _sanitize_summary_text(p)
+        t = re.sub(r"^(TOM_TAT_THEO_MUC|CAC_Y_CHINH_KHONG_BO_SOT|NOI_DUNG_CHUA_RO)\s*:?\s*$", "", t, flags=re.IGNORECASE)
+        t = t.strip("- ").strip()
+        if not t:
+            continue
+        if "thieu_du_lieu" in t.lower() or t.lower() == "error":
+            continue
+        cleaned_points.append(t)
+    return cleaned_points[:24]
+
+
 def _build_summary_json_payload(
     *,
     job_id: str,
@@ -327,6 +460,7 @@ def _build_summary_json_payload(
     summary_text: str,
     key_points: List[str],
     source_word_count: int,
+    coverage: Dict,
 ) -> Dict:
     return {
         "job_id": job_id,
@@ -334,6 +468,7 @@ def _build_summary_json_payload(
         "summary_text": summary_text,
         "key_points": key_points,
         "source_word_count": source_word_count,
+        "coverage": coverage,
         "generated_at": now_iso(),
     }
 
@@ -356,6 +491,73 @@ def _upload_summary_json(
     if status_code >= 400:
         raise RuntimeError(f"Khong luu duoc file JSON summary len Supabase Storage: {res}")
     return object_path
+
+
+def _summarize_with_chunks_retry(
+    *,
+    client: genai.Client,
+    text: str,
+    job_id: str,
+) -> Dict:
+    max_chunk_chars = int(getattr(settings, "SUMMARY_CHUNK_CHARS", 6000))
+    coverage_threshold = float(getattr(settings, "SUMMARY_COVERAGE_THRESHOLD", "0.6"))
+
+    attempt_plans = [
+        {"max_chars": max_chunk_chars, "extra_prompt": ""},
+        {
+            "max_chars": max(3000, int(max_chunk_chars * 0.75)),
+            "extra_prompt": "Tap trung bao phu day du tung chuong/muc, khong bo sot.",
+        },
+    ]
+
+    best = {"summary": "", "coverage": {"coverage_ratio": 0.0, "source_headings": [], "matched_headings": [], "missing_headings": []}}
+
+    for attempt_idx, plan in enumerate(attempt_plans, start=1):
+        chunks = _chunk_text_by_headings(text, max_chars=int(plan["max_chars"]))
+        if not chunks:
+            chunks = _chunk_text(text, max_chars=int(plan["max_chars"]))
+        if not chunks:
+            raise RuntimeError("Khong tach duoc chunk.")
+
+        part_summaries: List[str] = []
+        total = len(chunks)
+        for idx, chunk in enumerate(chunks, start=1):
+            part = _chat(
+                client=client,
+                system_prompt=CHUNK_SYSTEM_PROMPT,
+                user_prompt=f"[PHAN {idx}/{total}] {plan['extra_prompt']}\n\n{chunk}",
+                max_tokens=900,
+            )
+            part_summaries.append(part)
+            progress = min(85, 20 + int((idx / total) * 55))
+            supabase_client.update_summary_job(job_id, {"progress": progress})
+
+        merged = "\n\n".join(part_summaries)
+        summary = _chat(
+            client=client,
+            system_prompt=FINAL_SYSTEM_PROMPT,
+            user_prompt=merged,
+            max_tokens=1500,
+        )
+        summary = _normalize_summary_sections(summary)
+        try:
+            _validate_summary_output(summary)
+        except RuntimeError:
+            summary = _repair_summary_format(client, summary)
+            _validate_summary_output(summary)
+
+        coverage = _coverage_audit(text, summary)
+        if coverage.get("coverage_ratio", 0.0) >= coverage_threshold:
+            return {"summary": summary, "coverage": coverage}
+
+        if coverage.get("coverage_ratio", 0.0) > best["coverage"]["coverage_ratio"]:
+            best = {"summary": summary, "coverage": coverage}
+
+        # Retry only if another attempt remains
+        if attempt_idx < len(attempt_plans):
+            supabase_client.update_summary_job(job_id, {"progress": 60})
+
+    return best
 
 
 def process_summary_job(job_id: str) -> None:
@@ -391,12 +593,13 @@ def process_summary_job(job_id: str) -> None:
 
         supabase_client.update_summary_job(job_id, {"progress": 20})
 
-        max_chunk_chars = int(getattr(settings, "SUMMARY_CHUNK_CHARS", 6000))
-        chunks = _chunk_text(text, max_chars=max_chunk_chars)
-        if not chunks:
-            raise RuntimeError("Khong tach duoc chunk.")
-
         client = _gemini_client()
+        coverage: Dict = {
+            "coverage_ratio": 0.0,
+            "source_headings": [],
+            "matched_headings": [],
+            "missing_headings": [],
+        }
 
         # PDF thuong loi text extraction (scan/font), uu tien doc truc tiep bang Gemini.
         if is_pdf:
@@ -414,33 +617,25 @@ def process_summary_job(job_id: str) -> None:
                     max_tokens=1800,
                 )
             except Exception:
-                # Fallback ve luong text extraction neu server/model khong ho tro doc binary PDF.
+                # Fallback ve luong text extraction + heading chunk + retry coverage.
                 _validate_source_text(text)
-                part_summaries: List[str] = []
-                total = len(chunks)
-                for idx, chunk in enumerate(chunks, start=1):
-                    part = _chat(
-                        client=client,
-                        system_prompt=CHUNK_SYSTEM_PROMPT,
-                        user_prompt=f"[PHAN {idx}/{total}]\n\n{chunk}",
-                        max_tokens=900,
-                    )
-                    part_summaries.append(part)
-                    progress = min(85, 20 + int((idx / total) * 55))
-                    supabase_client.update_summary_job(job_id, {"progress": progress})
-                merged = "\n\n".join(part_summaries)
-                final_summary = _chat(
-                    client=client,
-                    system_prompt=FINAL_SYSTEM_PROMPT,
-                    user_prompt=merged,
-                    max_tokens=1200,
-                )
+                summarized = _summarize_with_chunks_retry(client=client, text=text, job_id=job_id)
+                final_summary = summarized["summary"]
+                coverage = summarized["coverage"]
             final_summary = _normalize_summary_sections(final_summary)
             try:
                 _validate_summary_output(final_summary)
             except RuntimeError:
                 final_summary = _repair_summary_format(client, final_summary)
                 _validate_summary_output(final_summary)
+            if coverage.get("coverage_ratio", 0.0) == 0.0:
+                coverage = _coverage_audit(text, final_summary)
+            if coverage.get("coverage_ratio", 0.0) < float(getattr(settings, "SUMMARY_COVERAGE_THRESHOLD", "0.6")):
+                # Retry them bang chunk flow khi doc binary bo sot qua nhieu heading.
+                _validate_source_text(text)
+                summarized = _summarize_with_chunks_retry(client=client, text=text, job_id=job_id)
+                final_summary = summarized["summary"]
+                coverage = summarized["coverage"]
 
             supabase_client.update_summary_job(job_id, {"progress": 80})
             raw_points = _chat(
@@ -449,9 +644,10 @@ def process_summary_job(job_id: str) -> None:
                 user_prompt=final_summary,
                 max_tokens=700,
             )
-            key_points = _parse_key_points(raw_points)
+            key_points = _sanitize_key_points(_parse_key_points(raw_points))
             if not key_points:
                 raise RuntimeError("Khong trich duoc cac y chinh dat yeu cau.")
+            final_summary = _sanitize_summary_text(final_summary)
 
             supabase_client.update_summary_job(
                 job_id,
@@ -472,6 +668,7 @@ def process_summary_job(job_id: str) -> None:
                     summary_text=final_summary,
                     key_points=key_points,
                     source_word_count=len(text.split()),
+                    coverage=coverage,
                 )
                 _upload_summary_json(
                     bucket=bucket,
@@ -485,34 +682,9 @@ def process_summary_job(job_id: str) -> None:
             return
 
         _validate_source_text(text)
-        part_summaries: List[str] = []
-
-        total = len(chunks)
-        for idx, chunk in enumerate(chunks, start=1):
-            part = _chat(
-                client=client,
-                system_prompt=CHUNK_SYSTEM_PROMPT,
-                user_prompt=f"[PHAN {idx}/{total}]\n\n{chunk}",
-                max_tokens=900,
-            )
-            part_summaries.append(part)
-            progress = min(85, 20 + int((idx / total) * 55))
-            supabase_client.update_summary_job(job_id, {"progress": progress})
-
-        merged = "\n\n".join(part_summaries)
-
-        final_summary = _chat(
-            client=client,
-            system_prompt=FINAL_SYSTEM_PROMPT,
-            user_prompt=merged,
-            max_tokens=1200,
-        )
-        final_summary = _normalize_summary_sections(final_summary)
-        try:
-            _validate_summary_output(final_summary)
-        except RuntimeError:
-            final_summary = _repair_summary_format(client, final_summary)
-            _validate_summary_output(final_summary)
+        summarized = _summarize_with_chunks_retry(client=client, text=text, job_id=job_id)
+        final_summary = summarized["summary"]
+        coverage = summarized["coverage"]
 
         raw_points = _chat(
             client=client,
@@ -520,9 +692,10 @@ def process_summary_job(job_id: str) -> None:
             user_prompt=final_summary,
             max_tokens=700,
         )
-        key_points = _parse_key_points(raw_points)
+        key_points = _sanitize_key_points(_parse_key_points(raw_points))
         if not key_points:
             raise RuntimeError("Khong trich duoc cac y chinh dat yeu cau.")
+        final_summary = _sanitize_summary_text(final_summary)
 
         supabase_client.update_summary_job(
             job_id,
@@ -543,6 +716,7 @@ def process_summary_job(job_id: str) -> None:
                 summary_text=final_summary,
                 key_points=key_points,
                 source_word_count=len(text.split()),
+                coverage=coverage,
             )
             _upload_summary_json(
                 bucket=bucket,
