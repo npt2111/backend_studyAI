@@ -1,9 +1,11 @@
 import io
+import json
 import re
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
+from uuid import uuid4
 
 from django.conf import settings
 from docx import Document
@@ -23,7 +25,7 @@ Muc tieu:
 Quy tac bat buoc:
 1) Chi dung thong tin xuat hien trong van ban dau vao.
 2) Khong phong doan phan bi thieu.
-3) Neu doan nao khong du du lieu, ghi ro: [THIEU_DU_LIEU].
+3) Chi duoc ghi [THIEU_DU_LIEU] khi doan input that su rong/khong doc duoc.
 4) Giu nguyen thuat ngu quan trong, ten chuong/muc neu co.
 5) Khong viet mo dau xa giao.
 
@@ -34,7 +36,7 @@ Dinh dang dau ra:
 - ...
 
 ## CAC_Y_CHINH_KHONG_BO_SOT
-- 10-20 gach dau dong (tuy do dai tai lieu), moi y 1-2 cau.
+- 12-24 gach dau dong (tuy do dai tai lieu), moi y 1-2 cau.
 - Moi y phai bam sat nguon, khong them dien giai ngoai van ban.
 
 ## NOI_DUNG_CHUA_RO
@@ -52,8 +54,9 @@ Muc tieu:
 
 Quy tac:
 1) Chi tong hop tu noi dung da cho.
-2) Neu co noi dung mo ho/khuyet, ghi [THIEU_DU_LIEU] o muc NOI_DUNG_CHUA_RO.
+2) Chi ghi [THIEU_DU_LIEU] neu that su khong co du lieu trong nguon.
 3) Khong viet mo dau xa giao.
+4) Uu tien bao phu day du cac chuong/muc xuat hien trong tai lieu.
 
 Dinh dang dau ra:
 ## TOM_TAT_THEO_MUC
@@ -62,7 +65,7 @@ Dinh dang dau ra:
 - ...
 
 ## CAC_Y_CHINH_KHONG_BO_SOT
-- 10-20 gach dau dong, moi y 1-2 cau, bam sat nguon.
+- 12-24 gach dau dong, moi y 1-2 cau, bam sat nguon.
 
 ## NOI_DUNG_CHUA_RO
 - Liet ke cac phan bi thieu/ngan/quet loi, neu co.
@@ -74,8 +77,8 @@ Quy tac:
 - Chi dung thong tin co trong dau vao.
 - Khong suy dien, khong them thong tin moi.
 - Moi dong bat dau bang '- '.
-- Tra ve 10-20 dong.
-Neu khong du du lieu thi tra ve: [THIEU_DU_LIEU]
+- Tra ve 12-24 dong.
+- Khong duoc tra ve [THIEU_DU_LIEU] neu dau vao co noi dung hop le.
 """.strip()
 
 
@@ -279,6 +282,10 @@ def _validate_summary_output(output: str) -> None:
     has_points = "cac_y_chinh_khong_bo_sot" in lowered or "cac y chinh khong bo sot" in lowered
     if not has_main or not has_points:
         raise RuntimeError("Tom tat khong dung dinh dang bat buoc.")
+    if "[thieu_du_lieu]" in lowered:
+        # Cho phep section NOI_DUNG_CHUA_RO co the rong, nhung khong chap nhan output toi gian.
+        # Phan nay tranh truong hop model tra loi de xuong va bo sot noi dung chinh.
+        raise RuntimeError("Tom tat chua day du noi dung (model tra ve [THIEU_DU_LIEU]).")
 
 
 def _normalize_summary_sections(output: str) -> str:
@@ -310,7 +317,45 @@ def _parse_key_points(raw: str) -> List[str]:
         cleaned = re.sub(r"^[^\w\[]+\s*", "", line.strip())
         if cleaned:
             lines.append(cleaned)
-    return lines[:20]
+    return lines[:24]
+
+
+def _build_summary_json_payload(
+    *,
+    job_id: str,
+    file_name: str,
+    summary_text: str,
+    key_points: List[str],
+    source_word_count: int,
+) -> Dict:
+    return {
+        "job_id": job_id,
+        "file_name": file_name,
+        "summary_text": summary_text,
+        "key_points": key_points,
+        "source_word_count": source_word_count,
+        "generated_at": now_iso(),
+    }
+
+
+def _upload_summary_json(
+    *,
+    bucket: str,
+    user_id: str,
+    job_id: str,
+    payload: Dict,
+) -> str:
+    object_path = f"{user_id}/summaries/{job_id}_{uuid4().hex}.json"
+    file_bytes = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    res, status_code = supabase_client.upload_storage_file(
+        bucket=bucket,
+        object_path=object_path,
+        file_bytes=file_bytes,
+        content_type="application/json; charset=utf-8",
+    )
+    if status_code >= 400:
+        raise RuntimeError(f"Khong luu duoc file JSON summary len Supabase Storage: {res}")
+    return object_path
 
 
 def process_summary_job(job_id: str) -> None:
@@ -330,6 +375,7 @@ def process_summary_job(job_id: str) -> None:
             raise RuntimeError("Khong tai duoc file tu Supabase Storage.")
 
         file_name = str(claimed_row.get("file_name", ""))
+        user_id = str(claimed_row.get("id_user", ""))
         mime_type = str(claimed_row.get("mime_type", ""))
         lower_name = file_name.lower()
         lower_mime = mime_type.lower()
@@ -419,6 +465,23 @@ def process_summary_job(job_id: str) -> None:
                     "error_message": None,
                 },
             )
+            try:
+                payload = _build_summary_json_payload(
+                    job_id=job_id,
+                    file_name=file_name,
+                    summary_text=final_summary,
+                    key_points=key_points,
+                    source_word_count=len(text.split()),
+                )
+                _upload_summary_json(
+                    bucket=bucket,
+                    user_id=user_id,
+                    job_id=job_id,
+                    payload=payload,
+                )
+            except Exception:
+                # Khong danh fail ca job tom tat neu buoc luu JSON loi.
+                pass
             return
 
         _validate_source_text(text)
@@ -473,6 +536,22 @@ def process_summary_job(job_id: str) -> None:
                 "error_message": None,
             },
         )
+        try:
+            payload = _build_summary_json_payload(
+                job_id=job_id,
+                file_name=file_name,
+                summary_text=final_summary,
+                key_points=key_points,
+                source_word_count=len(text.split()),
+            )
+            _upload_summary_json(
+                bucket=bucket,
+                user_id=user_id,
+                job_id=job_id,
+                payload=payload,
+            )
+        except Exception:
+            pass
 
     except Exception as exc:
         supabase_client.update_summary_job(
