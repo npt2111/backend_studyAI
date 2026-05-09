@@ -236,16 +236,12 @@ def _chat_with_binary_document(
     max_tokens: int,
 ) -> str:
     model = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash")
+    # Dung payload don gian de tuong thich nhieu phien ban google-genai.
     response = client.models.generate_content(
         model=model,
         contents=[
-            types.Content(
-                role="user",
-                parts=[
-                    types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
-                    types.Part(text=user_prompt),
-                ],
-            )
+            types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
+            user_prompt,
         ],
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,
@@ -334,17 +330,40 @@ def process_summary_job(job_id: str) -> None:
         # PDF thuong loi text extraction (scan/font), uu tien doc truc tiep bang Gemini.
         if is_pdf:
             supabase_client.update_summary_job(job_id, {"progress": 45})
-            final_summary = _chat_with_binary_document(
-                client=client,
-                system_prompt=FINAL_SYSTEM_PROMPT,
-                user_prompt=(
-                    "Doc TOAN BO file PDF dinh kem va tom tat day du theo dung dinh dang yeu cau. "
-                    "Khong suy dien, khong bo sot y chinh."
-                ),
-                file_bytes=bytes(blob),
-                mime_type="application/pdf",
-                max_tokens=1800,
-            )
+            try:
+                final_summary = _chat_with_binary_document(
+                    client=client,
+                    system_prompt=FINAL_SYSTEM_PROMPT,
+                    user_prompt=(
+                        "Doc TOAN BO file PDF dinh kem va tom tat day du theo dung dinh dang yeu cau. "
+                        "Khong suy dien, khong bo sot y chinh."
+                    ),
+                    file_bytes=bytes(blob),
+                    mime_type="application/pdf",
+                    max_tokens=1800,
+                )
+            except Exception:
+                # Fallback ve luong text extraction neu server/model khong ho tro doc binary PDF.
+                _validate_source_text(text)
+                part_summaries: List[str] = []
+                total = len(chunks)
+                for idx, chunk in enumerate(chunks, start=1):
+                    part = _chat(
+                        client=client,
+                        system_prompt=CHUNK_SYSTEM_PROMPT,
+                        user_prompt=f"[PHAN {idx}/{total}]\n\n{chunk}",
+                        max_tokens=900,
+                    )
+                    part_summaries.append(part)
+                    progress = min(85, 20 + int((idx / total) * 55))
+                    supabase_client.update_summary_job(job_id, {"progress": progress})
+                merged = "\n\n".join(part_summaries)
+                final_summary = _chat(
+                    client=client,
+                    system_prompt=FINAL_SYSTEM_PROMPT,
+                    user_prompt=merged,
+                    max_tokens=1200,
+                )
             _validate_summary_output(final_summary)
 
             supabase_client.update_summary_job(job_id, {"progress": 80})
