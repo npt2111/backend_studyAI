@@ -275,8 +275,33 @@ def _validate_summary_output(output: str) -> None:
     ]
     if any(phrase in lowered for phrase in banned_phrases):
         raise RuntimeError("Tom tat khong dat chat luong (phan hoi chung chung).")
-    if "## tom_tat_theo_muc" not in lowered or "## cac_y_chinh_khong_bo_sot" not in lowered:
+    has_main = "tom_tat_theo_muc" in lowered or "tom tat theo muc" in lowered
+    has_points = "cac_y_chinh_khong_bo_sot" in lowered or "cac y chinh khong bo sot" in lowered
+    if not has_main or not has_points:
         raise RuntimeError("Tom tat khong dung dinh dang bat buoc.")
+
+
+def _normalize_summary_sections(output: str) -> str:
+    text = (output or "").strip()
+    lowered = text.lower()
+    if "tom_tat_theo_muc" in lowered or "tom tat theo muc" in lowered:
+        return text
+    # Neu model tra ve noi dung hop ly nhung thieu heading, bo sung heading de app render on dinh.
+    return "## TOM_TAT_THEO_MUC\n" + text
+
+
+def _repair_summary_format(client: genai.Client, summary_text: str) -> str:
+    fixed = _chat(
+        client=client,
+        system_prompt=(
+            "Chuan hoa dinh dang dau ra. KHONG thay doi noi dung, KHONG them kien thuc moi. "
+            "Bat buoc co 3 section: "
+            "## TOM_TAT_THEO_MUC, ## CAC_Y_CHINH_KHONG_BO_SOT, ## NOI_DUNG_CHUA_RO."
+        ),
+        user_prompt=summary_text,
+        max_tokens=1400,
+    )
+    return _normalize_summary_sections(fixed)
 
 
 def _parse_key_points(raw: str) -> List[str]:
@@ -364,7 +389,12 @@ def process_summary_job(job_id: str) -> None:
                     user_prompt=merged,
                     max_tokens=1200,
                 )
-            _validate_summary_output(final_summary)
+            final_summary = _normalize_summary_sections(final_summary)
+            try:
+                _validate_summary_output(final_summary)
+            except RuntimeError:
+                final_summary = _repair_summary_format(client, final_summary)
+                _validate_summary_output(final_summary)
 
             supabase_client.update_summary_job(job_id, {"progress": 80})
             raw_points = _chat(
@@ -414,7 +444,12 @@ def process_summary_job(job_id: str) -> None:
             user_prompt=merged,
             max_tokens=1200,
         )
-        _validate_summary_output(final_summary)
+        final_summary = _normalize_summary_sections(final_summary)
+        try:
+            _validate_summary_output(final_summary)
+        except RuntimeError:
+            final_summary = _repair_summary_format(client, final_summary)
+            _validate_summary_output(final_summary)
 
         raw_points = _chat(
             client=client,
