@@ -227,6 +227,49 @@ def _chat(client: genai.Client, system_prompt: str, user_prompt: str, max_tokens
     return content
 
 
+def _chat_with_binary_document(
+    client: genai.Client,
+    system_prompt: str,
+    user_prompt: str,
+    file_bytes: bytes,
+    mime_type: str,
+    max_tokens: int,
+) -> str:
+    model = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash")
+    response = client.models.generate_content(
+        model=model,
+        contents=[
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
+                    types.Part(text=user_prompt),
+                ],
+            )
+        ],
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=0.2,
+            max_output_tokens=max_tokens,
+        ),
+    )
+
+    content = str(getattr(response, "text", "") or "").strip()
+    if not content:
+        texts: List[str] = []
+        for candidate in getattr(response, "candidates", []) or []:
+            parts = getattr(getattr(candidate, "content", None), "parts", None) or []
+            for part in parts:
+                part_text = getattr(part, "text", None)
+                if part_text:
+                    texts.append(str(part_text).strip())
+        content = "\n".join([t for t in texts if t]).strip()
+
+    if not content:
+        raise RuntimeError("Gemini tra ve noi dung rong khi doc truc tiep tai lieu.")
+    return content
+
+
 def _validate_summary_output(output: str) -> None:
     lowered = output.lower()
     banned_phrases = [
@@ -267,11 +310,13 @@ def process_summary_job(job_id: str) -> None:
 
         file_name = str(claimed_row.get("file_name", ""))
         mime_type = str(claimed_row.get("mime_type", ""))
+        lower_name = file_name.lower()
+        lower_mime = mime_type.lower()
+        is_pdf = lower_name.endswith(".pdf") or ("pdf" in lower_mime)
         text = _extract_text(file_name, mime_type, bytes(blob))
         text = _cleanup_text(text)
         if not text:
             raise RuntimeError("Khong trich xuat duoc noi dung file.")
-        _validate_source_text(text)
 
         max_source_chars = int(getattr(settings, "SUMMARY_MAX_SOURCE_CHARS", 300000))
         if len(text) > max_source_chars:
@@ -285,6 +330,49 @@ def process_summary_job(job_id: str) -> None:
             raise RuntimeError("Khong tach duoc chunk.")
 
         client = _gemini_client()
+
+        # PDF thuong loi text extraction (scan/font), uu tien doc truc tiep bang Gemini.
+        if is_pdf:
+            supabase_client.update_summary_job(job_id, {"progress": 45})
+            final_summary = _chat_with_binary_document(
+                client=client,
+                system_prompt=FINAL_SYSTEM_PROMPT,
+                user_prompt=(
+                    "Doc TOAN BO file PDF dinh kem va tom tat day du theo dung dinh dang yeu cau. "
+                    "Khong suy dien, khong bo sot y chinh."
+                ),
+                file_bytes=bytes(blob),
+                mime_type="application/pdf",
+                max_tokens=1800,
+            )
+            _validate_summary_output(final_summary)
+
+            supabase_client.update_summary_job(job_id, {"progress": 80})
+            raw_points = _chat(
+                client=client,
+                system_prompt=KEYPOINTS_SYSTEM_PROMPT,
+                user_prompt=final_summary,
+                max_tokens=700,
+            )
+            key_points = _parse_key_points(raw_points)
+            if not key_points:
+                raise RuntimeError("Khong trich duoc cac y chinh dat yeu cau.")
+
+            supabase_client.update_summary_job(
+                job_id,
+                {
+                    "status": "done",
+                    "progress": 100,
+                    "summary_text": final_summary,
+                    "key_points": key_points,
+                    "source_word_count": len(text.split()),
+                    "finished_at": now_iso(),
+                    "error_message": None,
+                },
+            )
+            return
+
+        _validate_source_text(text)
         part_summaries: List[str] = []
 
         total = len(chunks)
