@@ -11,7 +11,7 @@ from django.conf import settings
 from docx import Document
 from google import genai
 from google.genai import types
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter
 
 from config.services import supabase_client
 
@@ -126,6 +126,23 @@ def _extract_pdf_text(file_bytes: bytes) -> str:
     for page in reader.pages:
         chunks.append((page.extract_text() or "").strip())
     return "\n\n".join([c for c in chunks if c])
+
+
+def _extract_pdf_pages(file_bytes: bytes) -> List[str]:
+    reader = PdfReader(io.BytesIO(file_bytes))
+    pages: List[str] = []
+    for page in reader.pages:
+        pages.append((page.extract_text() or "").strip())
+    return pages
+
+
+def _is_pdf_text_extractable(pages: List[str], min_alpha_ratio: float = 0.25) -> bool:
+    total_text = " ".join([p for p in pages if p])
+    if len(total_text.split()) < 80:
+        return False
+    alpha = sum(1 for ch in total_text if ch.isalpha())
+    printable = sum(1 for ch in total_text if ch.isprintable())
+    return printable > 0 and (alpha / max(printable, 1)) >= min_alpha_ratio
 
 
 def _extract_docx_text(file_bytes: bytes) -> str:
@@ -274,7 +291,7 @@ def _gemini_client() -> genai.Client:
 
 
 def _chat(client: genai.Client, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
-    model = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash")
+    model = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash-lite")
     response = client.models.generate_content(
         model=model,
         contents=user_prompt,
@@ -560,6 +577,82 @@ def _summarize_with_chunks_retry(
     return best
 
 
+def _summarize_pdf_with_gemini_pages(
+    *,
+    client: genai.Client,
+    file_bytes: bytes,
+    job_id: str,
+    max_pages_per_chunk: int = 8,
+) -> Dict:
+    reader = PdfReader(io.BytesIO(file_bytes))
+    total_pages = len(reader.pages)
+    if total_pages <= 0:
+        raise RuntimeError("PDF khong co trang hop le.")
+
+    page_groups: List[tuple] = []
+    for start in range(0, total_pages, max_pages_per_chunk):
+        end = min(start + max_pages_per_chunk, total_pages)
+        page_groups.append((start, end))
+
+    part_summaries: List[str] = []
+    total_groups = len(page_groups)
+
+    for idx, (start, end) in enumerate(page_groups, start=1):
+        writer = PdfWriter()
+        for page_idx in range(start, end):
+            writer.add_page(reader.pages[page_idx])
+
+        buf = io.BytesIO()
+        writer.write(buf)
+        chunk_bytes = buf.getvalue()
+
+        part = _chat_with_binary_document(
+            client=client,
+            system_prompt=CHUNK_SYSTEM_PROMPT,
+            user_prompt=(
+                f"[TRANG {start + 1}-{end}/{total_pages}] "
+                "Doc TOAN BO noi dung cac trang nay va tom tat day du. "
+                "Khong bo sot bang bieu, so lieu, dinh nghia."
+            ),
+            file_bytes=chunk_bytes,
+            mime_type="application/pdf",
+            max_tokens=1000,
+        )
+        part_summaries.append(part)
+
+        progress = min(80, 20 + int((idx / total_groups) * 55))
+        supabase_client.update_summary_job(job_id, {"progress": progress})
+
+    merged = "\n\n".join(part_summaries)
+    final_summary = _chat(
+        client=client,
+        system_prompt=FINAL_SYSTEM_PROMPT,
+        user_prompt=merged,
+        max_tokens=1800,
+    )
+    final_summary = _normalize_summary_sections(final_summary)
+    try:
+        _validate_summary_output(final_summary)
+    except RuntimeError:
+        final_summary = _repair_summary_format(client, final_summary)
+        _validate_summary_output(final_summary)
+
+    all_pages_text = _extract_pdf_pages(file_bytes)
+    source_text = _cleanup_text("\n\n".join(all_pages_text))
+    coverage = (
+        _coverage_audit(source_text, final_summary)
+        if source_text
+        else {
+            "coverage_ratio": 1.0,
+            "source_headings": [],
+            "matched_headings": [],
+            "missing_headings": [],
+        }
+    )
+
+    return {"summary": final_summary, "coverage": coverage, "source_text": source_text}
+
+
 def process_summary_job(job_id: str) -> None:
     claimed_row, claimed_status = supabase_client.claim_summary_job(job_id)
     if claimed_status >= 400:
@@ -601,41 +694,36 @@ def process_summary_job(job_id: str) -> None:
             "missing_headings": [],
         }
 
-        # PDF thuong loi text extraction (scan/font), uu tien doc truc tiep bang Gemini.
+        # PDF: phan luong theo text layer de tang do day du.
         if is_pdf:
-            supabase_client.update_summary_job(job_id, {"progress": 45})
-            try:
-                final_summary = _chat_with_binary_document(
-                    client=client,
-                    system_prompt=FINAL_SYSTEM_PROMPT,
-                    user_prompt=(
-                        "Doc TOAN BO file PDF dinh kem va tom tat day du theo dung dinh dang yeu cau. "
-                        "Khong suy dien, khong bo sot y chinh."
-                    ),
-                    file_bytes=bytes(blob),
-                    mime_type="application/pdf",
-                    max_tokens=1800,
-                )
-            except Exception:
-                # Fallback ve luong text extraction + heading chunk + retry coverage.
-                _validate_source_text(text)
-                summarized = _summarize_with_chunks_retry(client=client, text=text, job_id=job_id)
+            supabase_client.update_summary_job(job_id, {"progress": 15})
+            all_pages = _extract_pdf_pages(bytes(blob))
+            page_text = _cleanup_text("\n\n".join(all_pages))
+            can_extract = _is_pdf_text_extractable(all_pages)
+
+            if can_extract:
+                _validate_source_text(page_text)
+                summarized = _summarize_with_chunks_retry(client=client, text=page_text, job_id=job_id)
                 final_summary = summarized["summary"]
                 coverage = summarized["coverage"]
+                text = page_text
+            else:
+                summarized = _summarize_pdf_with_gemini_pages(
+                    client=client,
+                    file_bytes=bytes(blob),
+                    job_id=job_id,
+                    max_pages_per_chunk=int(getattr(settings, "SUMMARY_PDF_PAGES_PER_CHUNK", "8")),
+                )
+                final_summary = summarized["summary"]
+                coverage = summarized["coverage"]
+                text = summarized.get("source_text") or page_text or text
+
             final_summary = _normalize_summary_sections(final_summary)
             try:
                 _validate_summary_output(final_summary)
             except RuntimeError:
                 final_summary = _repair_summary_format(client, final_summary)
                 _validate_summary_output(final_summary)
-            if coverage.get("coverage_ratio", 0.0) == 0.0:
-                coverage = _coverage_audit(text, final_summary)
-            if coverage.get("coverage_ratio", 0.0) < float(getattr(settings, "SUMMARY_COVERAGE_THRESHOLD", "0.6")):
-                # Retry them bang chunk flow khi doc binary bo sot qua nhieu heading.
-                _validate_source_text(text)
-                summarized = _summarize_with_chunks_retry(client=client, text=text, job_id=job_id)
-                final_summary = summarized["summary"]
-                coverage = summarized["coverage"]
 
             supabase_client.update_summary_job(job_id, {"progress": 80})
             raw_points = _chat(
