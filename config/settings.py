@@ -9,6 +9,7 @@ load_dotenv()
 def env_bool(name: str, default: bool = False) -> bool:
     return os.getenv(name, str(default)).lower() in {"1", "true", "yes", "on"}
 
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -58,7 +59,6 @@ INSTALLED_APPS = [
     'app.planner',
     'app.analytics',
     'app.documents',
-
 ]
 
 MIDDLEWARE = [
@@ -102,23 +102,14 @@ DATABASES = {
 }
 
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
-    {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
-    },
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'Asia/Bangkok'
-
 USE_I18N = True
 USE_TZ = True
 
@@ -138,7 +129,7 @@ JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_MINUTES = int(os.getenv("ACCESS_TOKEN_MINUTES", "10080"))  # 7 days
 REFRESH_TOKEN_DAYS = int(os.getenv("REFRESH_TOKEN_DAYS", "30"))
 
-# CORS for Kotlin app and local testing
+# CORS
 CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL_ORIGINS", True)
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
@@ -146,12 +137,19 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 
-# Gemini config (co fallback tu bien cu OPENAI_* de de migrate)
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", os.getenv("OPENAI_API_KEY", "")).strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", os.getenv("OPENAI_MODEL", "gemini-2.5-flash-lite"))
+# ── Groq config (thay thế Gemini) ──────────────────────────────────────────
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+GROQ_MODEL   = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
-SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "study-documents")
-SUMMARY_MAX_FILE_MB = int(os.getenv("SUMMARY_MAX_FILE_MB", "20"))
-SUMMARY_CHUNK_CHARS = int(os.getenv("SUMMARY_CHUNK_CHARS", "6000"))
+# Retry settings (dùng chung cho Groq)
+GROQ_RETRY_MAX          = int(os.getenv("GROQ_RETRY_MAX", "3"))
+GROQ_RETRY_BASE_SECONDS = float(os.getenv("GROQ_RETRY_BASE_SECONDS", "8"))
+
+# ── Supabase Storage ────────────────────────────────────────────────────────
+SUPABASE_STORAGE_BUCKET  = os.getenv("SUPABASE_STORAGE_BUCKET", "study-documents")
+
+# ── Summary pipeline ────────────────────────────────────────────────────────
+SUMMARY_MAX_FILE_MB      = int(os.getenv("SUMMARY_MAX_FILE_MB", "20"))
+SUMMARY_CHUNK_CHARS      = int(os.getenv("SUMMARY_CHUNK_CHARS", "6000"))
 SUMMARY_MAX_SOURCE_CHARS = int(os.getenv("SUMMARY_MAX_SOURCE_CHARS", "300000"))
-SUMMARY_WORKER_THREADS = int(os.getenv("SUMMARY_WORKER_THREADS", "2"))
+SUMMARY_WORKER_THREADS   = int(os.getenv("SUMMARY_WORKER_THREADS", "2"))
