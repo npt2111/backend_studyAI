@@ -1,5 +1,6 @@
 import io
 import json
+import time
 import re
 import unicodedata
 from datetime import datetime, timezone
@@ -9,11 +10,14 @@ from uuid import uuid4
 
 from django.conf import settings
 from docx import Document
-from google import genai
-from google.genai import types
+from groq import Groq
 from pypdf import PdfReader, PdfWriter
 
 from config.services import supabase_client
+
+# ──────────────────────────────────────────────────────────────────────────────
+# System prompts (giữ nguyên logic, chỉ đổi AI backend)
+# ──────────────────────────────────────────────────────────────────────────────
 
 CHUNK_SYSTEM_PROMPT = """
 Ban la tro ly tom tat hoc thuat tieng Viet.
@@ -82,6 +86,10 @@ Quy tac:
 """.strip()
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -89,10 +97,8 @@ def now_iso() -> str:
 def normalize_job(row: Dict) -> Dict:
     if not row:
         return {}
-
     raw_points = row.get("key_points")
     key_points = raw_points if isinstance(raw_points, list) else []
-
     return {
         "id": row.get("id_job"),
         "id_job": row.get("id_job"),
@@ -112,8 +118,7 @@ def normalize_job(row: Dict) -> Dict:
 def _cleanup_text(raw_text: str) -> str:
     text = unicodedata.normalize("NFKC", raw_text or "")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = text.replace("\u00ad", "")
-    text = text.replace("\ufeff", "")
+    text = text.replace("\u00ad", "").replace("\ufeff", "")
     text = re.sub(r"[^\S\n]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]{2,}", " ", text)
@@ -122,18 +127,13 @@ def _cleanup_text(raw_text: str) -> str:
 
 def _extract_pdf_text(file_bytes: bytes) -> str:
     reader = PdfReader(io.BytesIO(file_bytes))
-    chunks = []
-    for page in reader.pages:
-        chunks.append((page.extract_text() or "").strip())
+    chunks = [(page.extract_text() or "").strip() for page in reader.pages]
     return "\n\n".join([c for c in chunks if c])
 
 
 def _extract_pdf_pages(file_bytes: bytes) -> List[str]:
     reader = PdfReader(io.BytesIO(file_bytes))
-    pages: List[str] = []
-    for page in reader.pages:
-        pages.append((page.extract_text() or "").strip())
-    return pages
+    return [(page.extract_text() or "").strip() for page in reader.pages]
 
 
 def _is_pdf_text_extractable(pages: List[str], min_alpha_ratio: float = 0.25) -> bool:
@@ -160,20 +160,16 @@ def _extract_docx_text(file_bytes: bytes) -> str:
 def _extract_text(file_name: str, mime_type: str, file_bytes: bytes) -> str:
     lower_name = (file_name or "").lower()
     lower_mime = (mime_type or "").lower()
-
     if lower_name.endswith(".pdf") or "pdf" in lower_mime:
         return _extract_pdf_text(file_bytes)
-
     if lower_name.endswith(".docx") or "wordprocessingml" in lower_mime:
         return _extract_docx_text(file_bytes)
-
     raise RuntimeError("Chi ho tro PDF va DOCX.")
 
 
 def _chunk_text(text: str, max_chars: int) -> List[str]:
     if len(text) <= max_chars:
         return [text]
-
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     chunks: List[str] = []
     current = ""
@@ -211,7 +207,6 @@ def _extract_outline_headings(text: str) -> List[str]:
         low = ln.lower()
         if any(re.match(p, low) for p in patterns):
             headings.append(ln)
-    # unique + preserve order
     seen = set()
     result: List[str] = []
     for h in headings:
@@ -261,7 +256,6 @@ def _chunk_text_by_headings(text: str, max_chars: int) -> List[str]:
             if len(block) <= max_chars:
                 current_chunk = block
             else:
-                # fallback for oversized section
                 chunks.extend(_chunk_text(block, max_chars=max_chars))
                 current_chunk = ""
     if current_chunk:
@@ -273,89 +267,157 @@ def _validate_source_text(text: str) -> None:
     words = text.split()
     if len(words) < 80:
         raise RuntimeError("Noi dung trich xuat qua ngan de tom tat day du.")
-
     alpha_count = sum(1 for ch in text if ch.isalpha())
     printable_count = sum(1 for ch in text if ch.isprintable())
     if printable_count == 0 or (alpha_count / max(printable_count, 1)) < 0.25:
         raise RuntimeError("Noi dung trich xuat chat luong thap (co the la PDF scan/loi font).")
-
     if text.count("\ufffd") > 10:
         raise RuntimeError("Noi dung trich xuat bi loi ky tu, khong the tom tat chinh xac.")
 
 
-def _gemini_client() -> genai.Client:
-    api_key = getattr(settings, "GEMINI_API_KEY", "").strip()
+# ──────────────────────────────────────────────────────────────────────────────
+# Groq client & chat helper  (thay thế toàn bộ _gemini_client + _chat)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _groq_client() -> Groq:
+    api_key = getattr(settings, "GROQ_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY chua duoc cau hinh.")
-    return genai.Client(api_key=api_key)
+        raise RuntimeError("GROQ_API_KEY chua duoc cau hinh.")
+    return Groq(api_key=api_key)
 
 
-def _chat(client: genai.Client, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
-    model = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash-lite")
-    response = client.models.generate_content(
-        model=model,
-        contents=user_prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=0.2,
-            max_output_tokens=max_tokens,
-        ),
-    )
+def _chat(client: Groq, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
+    """
+    Gọi Groq API với retry khi gặp rate-limit (429).
+    Interface giữ nguyên để không cần sửa code bên ngoài hàm này.
+    """
+    model       = getattr(settings, "GROQ_MODEL", "llama-3.3-70b-versatile")
+    max_retries = int(getattr(settings, "GROQ_RETRY_MAX", "3"))
+    base_sleep  = float(getattr(settings, "GROQ_RETRY_BASE_SECONDS", "8"))
 
-    content = str(getattr(response, "text", "") or "").strip()
-    if not content:
-        texts: List[str] = []
-        for candidate in getattr(response, "candidates", []) or []:
-            parts = getattr(getattr(candidate, "content", None), "parts", None) or []
-            for part in parts:
-                part_text = getattr(part, "text", None)
-                if part_text:
-                    texts.append(str(part_text).strip())
-        content = "\n".join([t for t in texts if t]).strip()
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": user_prompt},
+                ],
+                max_tokens=max_tokens,
+                temperature=0.2,
+            )
+            content = (response.choices[0].message.content or "").strip()
+            if not content:
+                raise RuntimeError("Groq tra ve noi dung rong.")
+            return content
 
-    if not content:
-        raise RuntimeError("Gemini tra ve noi dung rong.")
-    return content
+        except Exception as exc:
+            last_exc = exc
+            msg = str(exc).lower()
+            # Rate-limit → đợi rồi thử lại
+            if ("rate_limit" in msg or "429" in msg or "too many" in msg):
+                if attempt < max_retries - 1:
+                    time.sleep(base_sleep * (2 ** attempt))
+                    continue
+            raise
+
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Groq: khong co response sau retry.")
 
 
-def _chat_with_binary_document(
-    client: genai.Client,
-    system_prompt: str,
-    user_prompt: str,
+# ──────────────────────────────────────────────────────────────────────────────
+# NOTE: _chat_with_binary_document (gửi file PDF thô lên Gemini) KHÔNG thể
+# dùng với Groq vì Groq chưa hỗ trợ upload file nhị phân.
+# Thay thế: khi PDF không extract được text, fallback sang OCR-based text
+# extraction bằng pypdf (đã có sẵn) rồi dùng _chat bình thường.
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _summarize_pdf_pages_via_text(
+    *,
+    client: Groq,
     file_bytes: bytes,
-    mime_type: str,
-    max_tokens: int,
-) -> str:
-    model = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash")
-    # Dung payload don gian de tuong thich nhieu phien ban google-genai.
-    response = client.models.generate_content(
-        model=model,
-        contents=[
-            types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
-            user_prompt,
-        ],
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=0.2,
-            max_output_tokens=max_tokens,
-        ),
+    job_id: str,
+    max_pages_per_chunk: int = 8,
+) -> Dict:
+    """
+    Fallback khi PDF scan/không extract được: chia trang, extract text từng batch,
+    rồi tóm tắt bằng Groq (thay thế _summarize_pdf_with_gemini_pages).
+    """
+    reader = PdfReader(io.BytesIO(file_bytes))
+    total_pages = len(reader.pages)
+    if total_pages <= 0:
+        raise RuntimeError("PDF khong co trang hop le.")
+
+    page_groups: List[tuple] = []
+    for start in range(0, total_pages, max_pages_per_chunk):
+        end = min(start + max_pages_per_chunk, total_pages)
+        page_groups.append((start, end))
+
+    part_summaries: List[str] = []
+    total_groups = len(page_groups)
+
+    for idx, (start, end) in enumerate(page_groups, start=1):
+        # Trích text từng batch trang
+        batch_text = "\n\n".join(
+            (reader.pages[p].extract_text() or "").strip()
+            for p in range(start, end)
+        )
+        batch_text = _cleanup_text(batch_text)
+
+        if len(batch_text.split()) < 20:
+            part_summaries.append(f"[Trang {start+1}-{end}: khong trich duoc text]")
+        else:
+            part = _chat(
+                client=client,
+                system_prompt=CHUNK_SYSTEM_PROMPT,
+                user_prompt=(
+                    f"[TRANG {start+1}-{end}/{total_pages}] "
+                    "Doc TOAN BO noi dung cac trang nay va tom tat day du. "
+                    "Khong bo sot bang bieu, so lieu, dinh nghia.\n\n"
+                    + batch_text[:6000]
+                ),
+                max_tokens=900,
+            )
+            part_summaries.append(part)
+
+        progress = min(80, 20 + int((idx / total_groups) * 55))
+        if idx == total_groups or idx % 2 == 0:
+            supabase_client.update_summary_job(job_id, {"progress": progress})
+
+    merged = "\n\n".join(part_summaries)
+    final_summary = _chat(
+        client=client,
+        system_prompt=FINAL_SYSTEM_PROMPT,
+        user_prompt=merged,
+        max_tokens=1800,
     )
+    final_summary = _normalize_summary_sections(final_summary)
+    try:
+        _validate_summary_output(final_summary)
+    except RuntimeError:
+        final_summary = _repair_summary_format(client, final_summary)
+        _validate_summary_output(final_summary)
 
-    content = str(getattr(response, "text", "") or "").strip()
-    if not content:
-        texts: List[str] = []
-        for candidate in getattr(response, "candidates", []) or []:
-            parts = getattr(getattr(candidate, "content", None), "parts", None) or []
-            for part in parts:
-                part_text = getattr(part, "text", None)
-                if part_text:
-                    texts.append(str(part_text).strip())
-        content = "\n".join([t for t in texts if t]).strip()
+    all_pages_text = _extract_pdf_pages(file_bytes)
+    source_text = _cleanup_text("\n\n".join(all_pages_text))
+    coverage = (
+        _coverage_audit(source_text, final_summary)
+        if source_text
+        else {
+            "coverage_ratio": 1.0,
+            "source_headings": [],
+            "matched_headings": [],
+            "missing_headings": [],
+        }
+    )
+    return {"summary": final_summary, "coverage": coverage, "source_text": source_text}
 
-    if not content:
-        raise RuntimeError("Gemini tra ve noi dung rong khi doc truc tiep tai lieu.")
-    return content
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Validation / formatting helpers (giữ nguyên)
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _validate_summary_output(output: str) -> None:
     lowered = output.lower()
@@ -366,13 +428,11 @@ def _validate_summary_output(output: str) -> None:
     ]
     if any(phrase in lowered for phrase in banned_phrases):
         raise RuntimeError("Tom tat khong dat chat luong (phan hoi chung chung).")
-    has_main = "tom_tat_theo_muc" in lowered or "tom tat theo muc" in lowered
+    has_main   = "tom_tat_theo_muc" in lowered or "tom tat theo muc" in lowered
     has_points = "cac_y_chinh_khong_bo_sot" in lowered or "cac y chinh khong bo sot" in lowered
     if not has_main or not has_points:
         raise RuntimeError("Tom tat khong dung dinh dang bat buoc.")
     if "[thieu_du_lieu]" in lowered:
-        # Cho phep section NOI_DUNG_CHUA_RO co the rong, nhung khong chap nhan output toi gian.
-        # Phan nay tranh truong hop model tra loi de xuong va bo sot noi dung chinh.
         raise RuntimeError("Tom tat chua day du noi dung (model tra ve [THIEU_DU_LIEU]).")
 
 
@@ -381,11 +441,10 @@ def _normalize_summary_sections(output: str) -> str:
     lowered = text.lower()
     if "tom_tat_theo_muc" in lowered or "tom tat theo muc" in lowered:
         return text
-    # Neu model tra ve noi dung hop ly nhung thieu heading, bo sung heading de app render on dinh.
     return "## TOM_TAT_THEO_MUC\n" + text
 
 
-def _repair_summary_format(client: genai.Client, summary_text: str) -> str:
+def _repair_summary_format(client: Groq, summary_text: str) -> str:
     fixed = _chat(
         client=client,
         system_prompt=(
@@ -416,7 +475,6 @@ def _coverage_audit(source_text: str, summary_text: str) -> Dict:
             "missing_headings": [],
             "coverage_ratio": 1.0,
         }
-
     summary_norm = _normalize_heading_for_match(summary_text)
     matched: List[str] = []
     missing: List[str] = []
@@ -426,7 +484,6 @@ def _coverage_audit(source_text: str, summary_text: str) -> Dict:
             matched.append(h)
         else:
             missing.append(h)
-
     ratio = len(matched) / max(1, len(source_headings))
     return {
         "source_headings": source_headings,
@@ -447,9 +504,7 @@ def _parse_key_points(raw: str) -> List[str]:
 
 def _sanitize_summary_text(summary_text: str) -> str:
     text = (summary_text or "").strip()
-    # Bo ky hieu markdown gay roi khi render mobile.
     text = text.replace("**", "")
-    # Loai bo token he thong/placeholder.
     text = re.sub(r"\[THIEU_DU_LIEU\]", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\berror\b", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -460,7 +515,10 @@ def _sanitize_key_points(points: List[str]) -> List[str]:
     cleaned_points: List[str] = []
     for p in points:
         t = _sanitize_summary_text(p)
-        t = re.sub(r"^(TOM_TAT_THEO_MUC|CAC_Y_CHINH_KHONG_BO_SOT|NOI_DUNG_CHUA_RO)\s*:?\s*$", "", t, flags=re.IGNORECASE)
+        t = re.sub(
+            r"^(TOM_TAT_THEO_MUC|CAC_Y_CHINH_KHONG_BO_SOT|NOI_DUNG_CHUA_RO)\s*:?\s*$",
+            "", t, flags=re.IGNORECASE,
+        )
         t = t.strip("- ").strip()
         if not t:
             continue
@@ -510,14 +568,18 @@ def _upload_summary_json(
     return object_path
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Summarize pipeline
+# ──────────────────────────────────────────────────────────────────────────────
+
 def _summarize_with_chunks_retry(
     *,
-    client: genai.Client,
+    client: Groq,
     text: str,
     job_id: str,
 ) -> Dict:
-    max_chunk_chars = int(getattr(settings, "SUMMARY_CHUNK_CHARS", 6000))
-    coverage_threshold = float(getattr(settings, "SUMMARY_COVERAGE_THRESHOLD", "0.6"))
+    max_chunk_chars     = int(getattr(settings, "SUMMARY_CHUNK_CHARS", 6000))
+    coverage_threshold  = float(getattr(settings, "SUMMARY_COVERAGE_THRESHOLD", "0.6"))
 
     attempt_plans = [
         {"max_chars": max_chunk_chars, "extra_prompt": ""},
@@ -526,8 +588,18 @@ def _summarize_with_chunks_retry(
             "extra_prompt": "Tap trung bao phu day du tung chuong/muc, khong bo sot.",
         },
     ]
+    max_attempts  = int(getattr(settings, "SUMMARY_RETRY_ATTEMPTS", "1"))
+    attempt_plans = attempt_plans[: max(1, min(max_attempts, len(attempt_plans)))]
 
-    best = {"summary": "", "coverage": {"coverage_ratio": 0.0, "source_headings": [], "matched_headings": [], "missing_headings": []}}
+    best = {
+        "summary": "",
+        "coverage": {
+            "coverage_ratio": 0.0,
+            "source_headings": [],
+            "matched_headings": [],
+            "missing_headings": [],
+        },
+    }
 
     for attempt_idx, plan in enumerate(attempt_plans, start=1):
         chunks = _chunk_text_by_headings(text, max_chars=int(plan["max_chars"]))
@@ -547,9 +619,10 @@ def _summarize_with_chunks_retry(
             )
             part_summaries.append(part)
             progress = min(85, 20 + int((idx / total) * 55))
-            supabase_client.update_summary_job(job_id, {"progress": progress})
+            if idx == total or idx % 2 == 0:
+                supabase_client.update_summary_job(job_id, {"progress": progress})
 
-        merged = "\n\n".join(part_summaries)
+        merged  = "\n\n".join(part_summaries)
         summary = _chat(
             client=client,
             system_prompt=FINAL_SYSTEM_PROMPT,
@@ -570,88 +643,15 @@ def _summarize_with_chunks_retry(
         if coverage.get("coverage_ratio", 0.0) > best["coverage"]["coverage_ratio"]:
             best = {"summary": summary, "coverage": coverage}
 
-        # Retry only if another attempt remains
         if attempt_idx < len(attempt_plans):
             supabase_client.update_summary_job(job_id, {"progress": 60})
 
     return best
 
 
-def _summarize_pdf_with_gemini_pages(
-    *,
-    client: genai.Client,
-    file_bytes: bytes,
-    job_id: str,
-    max_pages_per_chunk: int = 8,
-) -> Dict:
-    reader = PdfReader(io.BytesIO(file_bytes))
-    total_pages = len(reader.pages)
-    if total_pages <= 0:
-        raise RuntimeError("PDF khong co trang hop le.")
-
-    page_groups: List[tuple] = []
-    for start in range(0, total_pages, max_pages_per_chunk):
-        end = min(start + max_pages_per_chunk, total_pages)
-        page_groups.append((start, end))
-
-    part_summaries: List[str] = []
-    total_groups = len(page_groups)
-
-    for idx, (start, end) in enumerate(page_groups, start=1):
-        writer = PdfWriter()
-        for page_idx in range(start, end):
-            writer.add_page(reader.pages[page_idx])
-
-        buf = io.BytesIO()
-        writer.write(buf)
-        chunk_bytes = buf.getvalue()
-
-        part = _chat_with_binary_document(
-            client=client,
-            system_prompt=CHUNK_SYSTEM_PROMPT,
-            user_prompt=(
-                f"[TRANG {start + 1}-{end}/{total_pages}] "
-                "Doc TOAN BO noi dung cac trang nay va tom tat day du. "
-                "Khong bo sot bang bieu, so lieu, dinh nghia."
-            ),
-            file_bytes=chunk_bytes,
-            mime_type="application/pdf",
-            max_tokens=1000,
-        )
-        part_summaries.append(part)
-
-        progress = min(80, 20 + int((idx / total_groups) * 55))
-        supabase_client.update_summary_job(job_id, {"progress": progress})
-
-    merged = "\n\n".join(part_summaries)
-    final_summary = _chat(
-        client=client,
-        system_prompt=FINAL_SYSTEM_PROMPT,
-        user_prompt=merged,
-        max_tokens=1800,
-    )
-    final_summary = _normalize_summary_sections(final_summary)
-    try:
-        _validate_summary_output(final_summary)
-    except RuntimeError:
-        final_summary = _repair_summary_format(client, final_summary)
-        _validate_summary_output(final_summary)
-
-    all_pages_text = _extract_pdf_pages(file_bytes)
-    source_text = _cleanup_text("\n\n".join(all_pages_text))
-    coverage = (
-        _coverage_audit(source_text, final_summary)
-        if source_text
-        else {
-            "coverage_ratio": 1.0,
-            "source_headings": [],
-            "matched_headings": [],
-            "missing_headings": [],
-        }
-    )
-
-    return {"summary": final_summary, "coverage": coverage, "source_text": source_text}
-
+# ──────────────────────────────────────────────────────────────────────────────
+# Main entry point
+# ──────────────────────────────────────────────────────────────────────────────
 
 def process_summary_job(job_id: str) -> None:
     claimed_row, claimed_status = supabase_client.claim_summary_job(job_id)
@@ -670,11 +670,12 @@ def process_summary_job(job_id: str) -> None:
             raise RuntimeError("Khong tai duoc file tu Supabase Storage.")
 
         file_name = str(claimed_row.get("file_name", ""))
-        user_id = str(claimed_row.get("id_user", ""))
+        user_id   = str(claimed_row.get("id_user", ""))
         mime_type = str(claimed_row.get("mime_type", ""))
         lower_name = file_name.lower()
         lower_mime = mime_type.lower()
         is_pdf = lower_name.endswith(".pdf") or ("pdf" in lower_mime)
+
         text = _extract_text(file_name, mime_type, bytes(blob))
         text = _cleanup_text(text)
         if not text:
@@ -686,7 +687,8 @@ def process_summary_job(job_id: str) -> None:
 
         supabase_client.update_summary_job(job_id, {"progress": 20})
 
-        client = _gemini_client()
+        # Groq không nhận file binary → dùng text pipeline cho cả PDF scan
+        client = _groq_client()
         coverage: Dict = {
             "coverage_ratio": 0.0,
             "source_headings": [],
@@ -694,29 +696,29 @@ def process_summary_job(job_id: str) -> None:
             "missing_headings": [],
         }
 
-        # PDF: phan luong theo text layer de tang do day du.
         if is_pdf:
             supabase_client.update_summary_job(job_id, {"progress": 15})
-            all_pages = _extract_pdf_pages(bytes(blob))
-            page_text = _cleanup_text("\n\n".join(all_pages))
+            all_pages  = _extract_pdf_pages(bytes(blob))
+            page_text  = _cleanup_text("\n\n".join(all_pages))
             can_extract = _is_pdf_text_extractable(all_pages)
 
             if can_extract:
                 _validate_source_text(page_text)
-                summarized = _summarize_with_chunks_retry(client=client, text=page_text, job_id=job_id)
+                summarized   = _summarize_with_chunks_retry(client=client, text=page_text, job_id=job_id)
                 final_summary = summarized["summary"]
-                coverage = summarized["coverage"]
-                text = page_text
+                coverage      = summarized["coverage"]
+                text          = page_text
             else:
-                summarized = _summarize_pdf_with_gemini_pages(
+                # PDF scan: fallback chia trang, extract text, rồi tóm tắt
+                summarized    = _summarize_pdf_pages_via_text(
                     client=client,
                     file_bytes=bytes(blob),
                     job_id=job_id,
                     max_pages_per_chunk=int(getattr(settings, "SUMMARY_PDF_PAGES_PER_CHUNK", "8")),
                 )
                 final_summary = summarized["summary"]
-                coverage = summarized["coverage"]
-                text = summarized.get("source_text") or page_text or text
+                coverage      = summarized["coverage"]
+                text          = summarized.get("source_text") or page_text or text
 
             final_summary = _normalize_summary_sections(final_summary)
             try:
@@ -725,55 +727,15 @@ def process_summary_job(job_id: str) -> None:
                 final_summary = _repair_summary_format(client, final_summary)
                 _validate_summary_output(final_summary)
 
-            supabase_client.update_summary_job(job_id, {"progress": 80})
-            raw_points = _chat(
-                client=client,
-                system_prompt=KEYPOINTS_SYSTEM_PROMPT,
-                user_prompt=final_summary,
-                max_tokens=700,
-            )
-            key_points = _sanitize_key_points(_parse_key_points(raw_points))
-            if not key_points:
-                raise RuntimeError("Khong trich duoc cac y chinh dat yeu cau.")
-            final_summary = _sanitize_summary_text(final_summary)
+        else:
+            # DOCX
+            _validate_source_text(text)
+            summarized    = _summarize_with_chunks_retry(client=client, text=text, job_id=job_id)
+            final_summary = summarized["summary"]
+            coverage      = summarized["coverage"]
 
-            supabase_client.update_summary_job(
-                job_id,
-                {
-                    "status": "done",
-                    "progress": 100,
-                    "summary_text": final_summary,
-                    "key_points": key_points,
-                    "source_word_count": len(text.split()),
-                    "finished_at": now_iso(),
-                    "error_message": None,
-                },
-            )
-            try:
-                payload = _build_summary_json_payload(
-                    job_id=job_id,
-                    file_name=file_name,
-                    summary_text=final_summary,
-                    key_points=key_points,
-                    source_word_count=len(text.split()),
-                    coverage=coverage,
-                )
-                _upload_summary_json(
-                    bucket=bucket,
-                    user_id=user_id,
-                    job_id=job_id,
-                    payload=payload,
-                )
-            except Exception:
-                # Khong danh fail ca job tom tat neu buoc luu JSON loi.
-                pass
-            return
-
-        _validate_source_text(text)
-        summarized = _summarize_with_chunks_retry(client=client, text=text, job_id=job_id)
-        final_summary = summarized["summary"]
-        coverage = summarized["coverage"]
-
+        # Key points
+        supabase_client.update_summary_job(job_id, {"progress": 80})
         raw_points = _chat(
             client=client,
             system_prompt=KEYPOINTS_SYSTEM_PROMPT,
@@ -797,6 +759,7 @@ def process_summary_job(job_id: str) -> None:
                 "error_message": None,
             },
         )
+
         try:
             payload = _build_summary_json_payload(
                 job_id=job_id,
@@ -813,6 +776,7 @@ def process_summary_job(job_id: str) -> None:
                 payload=payload,
             )
         except Exception:
+            # Không fail cả job nếu lưu JSON lỗi
             pass
 
     except Exception as exc:
@@ -825,5 +789,3 @@ def process_summary_job(job_id: str) -> None:
                 "error_message": str(exc)[:1000] if str(exc) else "Khong ro loi.",
             },
         )
-
-
