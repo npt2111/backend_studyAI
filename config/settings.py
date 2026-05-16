@@ -139,7 +139,7 @@ CORS_ALLOWED_ORIGINS = [
 
 # ── Groq config (thay thế Gemini) ──────────────────────────────────────────
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
-GROQ_MODEL   = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL   = os.getenv("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 
 # Retry settings (dùng chung cho Groq)
 GROQ_RETRY_MAX          = int(os.getenv("GROQ_RETRY_MAX", "3"))
@@ -150,6 +150,14 @@ SUPABASE_STORAGE_BUCKET  = os.getenv("SUPABASE_STORAGE_BUCKET", "study-documents
 
 # ── Summary pipeline ────────────────────────────────────────────────────────
 SUMMARY_MAX_FILE_MB      = int(os.getenv("SUMMARY_MAX_FILE_MB", "20"))
-SUMMARY_CHUNK_CHARS      = int(os.getenv("SUMMARY_CHUNK_CHARS", "6000"))
-SUMMARY_MAX_SOURCE_CHARS = int(os.getenv("SUMMARY_MAX_SOURCE_CHARS", "300000"))
-SUMMARY_WORKER_THREADS   = int(os.getenv("SUMMARY_WORKER_THREADS", "2"))
+SUMMARY_CHUNK_CHARS      = int(os.getenv("SUMMARY_CHUNK_CHARS", "4500"))
+SUMMARY_MAX_SOURCE_CHARS = int(os.getenv("SUMMARY_MAX_SOURCE_CHARS", "120000"))
+SUMMARY_WORKER_THREADS   = int(os.getenv("SUMMARY_WORKER_THREADS", "1"))
+SUMMARY_RETRY_ATTEMPTS   = int(os.getenv("SUMMARY_RETRY_ATTEMPTS", "1"))
+SUMMARY_PDF_PAGES_PER_CHUNK = int(os.getenv("SUMMARY_PDF_PAGES_PER_CHUNK", "12"))
+
+# Token budgets (Groq)
+SUMMARY_CHUNK_MAX_TOKENS = int(os.getenv("SUMMARY_CHUNK_MAX_TOKENS", "650"))
+SUMMARY_FINAL_MAX_TOKENS = int(os.getenv("SUMMARY_FINAL_MAX_TOKENS", "1200"))
+SUMMARY_REPAIR_MAX_TOKENS = int(os.getenv("SUMMARY_REPAIR_MAX_TOKENS", "900"))
+SUMMARY_KEYPOINTS_MAX_TOKENS = int(os.getenv("SUMMARY_KEYPOINTS_MAX_TOKENS", "450"))

@@ -145,6 +145,36 @@ Trả về 12-24 key_points và 8-20 keywords.
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+SHORT_CHUNK_SYSTEM_PROMPT = """
+Tom tat doan tai lieu thanh JSON thuần.
+Chi dung thong tin trong input, khong suy dien, khong them kien thuc ngoai.
+Giu ten chuong/muc/so thu tu neu co. Khong viet gi ngoai JSON, khong markdown.
+Neu input rong hoac khong doc duoc, cho chapter_summary = "[THIEU_DU_LIEU]".
+Schema:
+{"chapters":[{"chapter_number":"1","chapter_title":"Ten chuong hoac null","chapter_summary":"2-4 cau","sections":[{"section_number":"1.1","section_title":"Ten muc","section_summary":"1-3 cau"}]}],"key_points":["3-8 y chinh"],"unclear_parts":"chuoi rong hoac mo ta loi"}
+Neu khong co cau truc chuong/muc, tao 1 chapter voi chapter_number="0", chapter_title=null, sections=[].
+""".strip()
+
+SHORT_FINAL_SYSTEM_PROMPT = """
+Hop nhat mang JSON cac chunk thanh 1 JSON tong hop day du, khong bo sot chuong/muc.
+Chi dung du lieu da cho, khong suy dien, khong viet gi ngoai JSON, khong markdown.
+Gop cac chapter/section trung so thu tu, giu ten goc, sap xep tang dan.
+Schema:
+{"chapters":[{"chapter_number":"1","chapter_title":"Ten chuong hoac null","chapter_summary":"3-5 cau","sections":[{"section_number":"1.1","section_title":"Ten muc","section_summary":"1-3 cau"}]}],"key_points":["8-12 y chinh"],"keywords":["8-15 tu khoa"],"unclear_sections":["cac phan mo ho neu co"]}
+Key points la cau hoan chinh, bam sat nguon. Keywords la ten rieng/thuat ngu/khai niem trong tam.
+""".strip()
+
+SHORT_KEYPOINTS_SYSTEM_PROMPT = """
+Trich xuat key_points va keywords tu JSON dau vao.
+Chi dung thong tin co san, khong suy dien, khong viet gi ngoai JSON, khong markdown.
+Schema:
+{"key_points":["8-12 cau y chinh"],"keywords":["8-15 tu khoa ngan"]}
+""".strip()
+
+CHUNK_SYSTEM_PROMPT = SHORT_CHUNK_SYSTEM_PROMPT
+FINAL_SYSTEM_PROMPT = SHORT_FINAL_SYSTEM_PROMPT
+KEYPOINTS_SYSTEM_PROMPT = SHORT_KEYPOINTS_SYSTEM_PROMPT
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -393,7 +423,7 @@ def _repair_summary_json(client: Groq, raw: str) -> Dict:
             '"keywords": [...], "unclear_sections": []}'
         ),
         user_prompt=raw[:4000],
-        max_tokens=1600,
+        max_tokens=int(getattr(settings, "SUMMARY_REPAIR_MAX_TOKENS", "900")),
     )
     return _safe_parse_json(fixed_raw)
 
@@ -469,7 +499,7 @@ def _sanitize_key_points(points: List[str]) -> List[str]:
         if "thieu_du_lieu" in t.lower() or t.lower() == "error":
             continue
         cleaned_points.append(t)
-    return cleaned_points[:24]
+    return cleaned_points[:12]
 
 
 def _sanitize_summary_json(data: Dict) -> Dict:
@@ -598,7 +628,7 @@ def _chat(client: Groq, system_prompt: str, user_prompt: str, max_tokens: int) -
     """
     Gọi Groq API với retry khi gặp rate-limit (429).
     """
-    model       = getattr(settings, "GROQ_MODEL", "llama-3.3-70b-versatile")
+    model       = getattr(settings, "GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
     max_retries = int(getattr(settings, "GROQ_RETRY_MAX", "3"))
     base_sleep  = float(getattr(settings, "GROQ_RETRY_BASE_SECONDS", "8"))
 
@@ -690,7 +720,7 @@ def _summarize_pdf_pages_via_text(
                     "Không bỏ sót bảng biểu, số liệu, định nghĩa.\n\n"
                     + batch_text[:6000]
                 ),
-                max_tokens=1000,
+                max_tokens=int(getattr(settings, "SUMMARY_CHUNK_MAX_TOKENS", "650")),
             )
             chunk_raws.append(raw)
 
@@ -706,7 +736,7 @@ def _summarize_pdf_pages_via_text(
         client=client,
         system_prompt=FINAL_SYSTEM_PROMPT,
         user_prompt=merged_input,
-        max_tokens=2000,
+        max_tokens=int(getattr(settings, "SUMMARY_FINAL_MAX_TOKENS", "1200")),
     )
     try:
         summary_data = _safe_parse_json(final_raw)
@@ -793,7 +823,7 @@ def _summarize_with_chunks_retry(
                 user_prompt=(
                     f"[PHẦN {idx}/{total}] {plan['extra_prompt']}\n\n{chunk}"
                 ),
-                max_tokens=1000,
+                max_tokens=int(getattr(settings, "SUMMARY_CHUNK_MAX_TOKENS", "650")),
             )
             chunk_raws.append(raw)
             progress = min(85, 20 + int((idx / total) * 55))
@@ -808,7 +838,7 @@ def _summarize_with_chunks_retry(
             client=client,
             system_prompt=FINAL_SYSTEM_PROMPT,
             user_prompt=merged_input,
-            max_tokens=2000,
+            max_tokens=int(getattr(settings, "SUMMARY_FINAL_MAX_TOKENS", "1200")),
         )
         try:
             summary_data = _safe_parse_json(final_raw)
@@ -880,7 +910,7 @@ def process_summary_job(job_id: str) -> None:
         if not text:
             raise RuntimeError("Không trích xuất được nội dung file.")
 
-        max_source_chars = int(getattr(settings, "SUMMARY_MAX_SOURCE_CHARS", 300000))
+        max_source_chars = int(getattr(settings, "SUMMARY_MAX_SOURCE_CHARS", 120000))
         if len(text) > max_source_chars:
             text = text[:max_source_chars]
 
@@ -919,7 +949,7 @@ def process_summary_job(job_id: str) -> None:
                     file_bytes=bytes(blob),
                     job_id=job_id,
                     max_pages_per_chunk=int(
-                        getattr(settings, "SUMMARY_PDF_PAGES_PER_CHUNK", "8")
+                        getattr(settings, "SUMMARY_PDF_PAGES_PER_CHUNK", "12")
                     ),
                 )
                 summary_data       = summarized["summary_data"]
@@ -951,7 +981,7 @@ def process_summary_job(job_id: str) -> None:
                 client=client,
                 system_prompt=KEYPOINTS_SYSTEM_PROMPT,
                 user_prompt=_json.dumps(summary_data, ensure_ascii=False)[:4000],
-                max_tokens=700,
+                max_tokens=int(getattr(settings, "SUMMARY_KEYPOINTS_MAX_TOKENS", "450")),
             )
             try:
                 kp_data    = _safe_parse_json(raw_kp)
