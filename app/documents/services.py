@@ -418,6 +418,93 @@ def _merge_chunk_jsons(chunk_raws: List[str]) -> List[Dict]:
     return result
 
 
+def _fallback_summary_json_from_chunks(chunk_dicts: List[Dict]) -> Dict:
+    chapters: List[Dict] = []
+    key_points: List[str] = []
+    keywords: List[str] = []
+    unclear_sections: List[str] = []
+
+    chapter_map: Dict[str, Dict] = {}
+    section_seen: Dict[str, set] = {}
+
+    for item in chunk_dicts:
+        for ch in item.get("chapters", []) if isinstance(item, dict) else []:
+            chapter_number = str(ch.get("chapter_number") or "0").strip()
+            chapter_title = ch.get("chapter_title")
+            chapter_key = chapter_number or "0"
+            if chapter_key not in chapter_map:
+                chapter_map[chapter_key] = {
+                    "chapter_number": chapter_number or "0",
+                    "chapter_title": chapter_title,
+                    "chapter_summary": str(ch.get("chapter_summary") or "").strip(),
+                    "sections": [],
+                }
+                section_seen[chapter_key] = set()
+            else:
+                current_summary = chapter_map[chapter_key].get("chapter_summary", "")
+                new_summary = str(ch.get("chapter_summary") or "").strip()
+                if len(new_summary) > len(current_summary):
+                    chapter_map[chapter_key]["chapter_summary"] = new_summary
+                if not chapter_map[chapter_key].get("chapter_title") and chapter_title:
+                    chapter_map[chapter_key]["chapter_title"] = chapter_title
+
+            for sec in ch.get("sections", []) if isinstance(ch, dict) else []:
+                sec_num = str(sec.get("section_number") or "").strip()
+                sec_title = str(sec.get("section_title") or "").strip()
+                sec_key = f"{sec_num}|{sec_title}".lower()
+                if sec_key in section_seen[chapter_key]:
+                    continue
+                section_seen[chapter_key].add(sec_key)
+                chapter_map[chapter_key]["sections"].append(
+                    {
+                        "section_number": sec_num,
+                        "section_title": sec.get("section_title"),
+                        "section_summary": str(sec.get("section_summary") or "").strip(),
+                    }
+                )
+
+        for kp in item.get("key_points", []) if isinstance(item, dict) else []:
+            text = str(kp).strip()
+            if text and text not in key_points:
+                key_points.append(text)
+
+        for kw in item.get("keywords", []) if isinstance(item, dict) else []:
+            text = str(kw).strip()
+            if text and text not in keywords:
+                keywords.append(text)
+
+        for unclear in item.get("unclear_sections", []) if isinstance(item, dict) else []:
+            text = str(unclear).strip()
+            if text and text not in unclear_sections:
+                unclear_sections.append(text)
+
+        raw_text = str(item.get("raw_text") or "").strip() if isinstance(item, dict) else ""
+        if raw_text and raw_text not in unclear_sections:
+            unclear_sections.append("Mot chunk khong parse duoc JSON tong hop.")
+
+    chapters = sorted(
+        chapter_map.values(),
+        key=lambda x: (str(x.get("chapter_number") or "9999")),
+    )
+
+    if not chapters:
+        chapters = [
+            {
+                "chapter_number": "0",
+                "chapter_title": None,
+                "chapter_summary": "Khong tong hop duoc day du tu ket qua chunk.",
+                "sections": [],
+            }
+        ]
+
+    return {
+        "chapters": chapters,
+        "key_points": key_points[:12],
+        "keywords": keywords[:15],
+        "unclear_sections": unclear_sections[:20],
+    }
+
+
 def _repair_summary_json(client: Groq, raw: str) -> Dict:
     """Sửa JSON lỗi cấu trúc bằng cách gọi lại model."""
     fixed_raw = _chat(
@@ -748,13 +835,19 @@ def _summarize_pdf_pages_via_text(
     try:
         summary_data = _safe_parse_json(final_raw)
     except Exception:
-        summary_data = _repair_summary_json(client, final_raw)
+        try:
+            summary_data = _repair_summary_json(client, final_raw)
+        except Exception:
+            summary_data = _fallback_summary_json_from_chunks(merged_chunks)
 
     try:
         _validate_summary_json(summary_data)
     except RuntimeError:
-        summary_data = _repair_summary_json(client, final_raw)
-        _validate_summary_json(summary_data)
+        try:
+            summary_data = _repair_summary_json(client, final_raw)
+            _validate_summary_json(summary_data)
+        except Exception:
+            summary_data = _fallback_summary_json_from_chunks(merged_chunks)
 
     summary_data = _sanitize_summary_json(summary_data)
     summary_text = _summary_json_to_text(summary_data)
@@ -850,13 +943,19 @@ def _summarize_with_chunks_retry(
         try:
             summary_data = _safe_parse_json(final_raw)
         except Exception:
-            summary_data = _repair_summary_json(client, final_raw)
+            try:
+                summary_data = _repair_summary_json(client, final_raw)
+            except Exception:
+                summary_data = _fallback_summary_json_from_chunks(merged_chunks)
 
         try:
             _validate_summary_json(summary_data)
         except RuntimeError:
-            summary_data = _repair_summary_json(client, final_raw)
-            _validate_summary_json(summary_data)
+            try:
+                summary_data = _repair_summary_json(client, final_raw)
+                _validate_summary_json(summary_data)
+            except Exception:
+                summary_data = _fallback_summary_json_from_chunks(merged_chunks)
 
         summary_data = _sanitize_summary_json(summary_data)
         summary_text = _summary_json_to_text(summary_data)
