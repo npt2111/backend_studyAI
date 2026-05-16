@@ -377,7 +377,14 @@ def _safe_parse_json(raw: str) -> Dict:
     match = re.search(r"\{[\s\S]*\}", text)
     if not match:
         raise RuntimeError("Không tìm thấy JSON hợp lệ trong response.")
-    return _json.loads(match.group(0))
+    candidate = match.group(0).strip()
+    try:
+        return _json.loads(candidate)
+    except _json.JSONDecodeError:
+        repaired = re.sub(r",\s*([}\]])", r"\1", candidate)
+        repaired = re.sub(r'(["\]\}0-9A-Za-z])\s*\n\s*(")', r"\1,\n\2", repaired)
+        repaired = re.sub(r'(")\s+("[-A-Za-z0-9_]+\"\s*:)', r'\1, \2', repaired)
+        return _json.loads(repaired)
 
 
 def _validate_summary_json(data: Dict) -> None:
