@@ -1,4 +1,4 @@
-import io
+﻿import io
 import json as _json
 import time
 import re
@@ -10,143 +10,144 @@ from uuid import uuid4
 
 from django.conf import settings
 from docx import Document
-from groq import Groq
+from google import genai
+from google.genai import types
 from pypdf import PdfReader, PdfWriter
 
 from config.services import supabase_client
 
 
 CHUNK_SYSTEM_PROMPT = """
-Bạn là trợ lý tóm tắt học thuật tiếng Việt. Nhận một đoạn văn bản (một phần của tài liệu dài).
+Báº¡n lÃ  trá»£ lÃ½ tÃ³m táº¯t há»c thuáº­t tiáº¿ng Viá»‡t. Nháº­n má»™t Ä‘oáº¡n vÄƒn báº£n (má»™t pháº§n cá»§a tÃ i liá»‡u dÃ i).
 
-NHIỆM VỤ: Tóm tắt TOÀN BỘ nội dung đoạn này dưới dạng JSON hợp lệ.
+NHIá»†M Vá»¤: TÃ³m táº¯t TOÃ€N Bá»˜ ná»™i dung Ä‘oáº¡n nÃ y dÆ°á»›i dáº¡ng JSON há»£p lá»‡.
 
-QUY TẮC BẮT BUỘC:
-1. CHỈ dùng thông tin có trong đoạn văn bản đầu vào — không suy diễn, không thêm kiến thức ngoài.
-2. Giữ nguyên tên chương, mục, số thứ tự nếu có (ví dụ: "Chương 3", "Mục 2.1").
-3. Nếu đoạn input thực sự rỗng/không đọc được → trả về JSON với chapter_summary: "[THIEU_DU_LIEU]".
-4. Không viết thêm bất kỳ text nào ngoài JSON.
-5. Không bọc JSON trong markdown code block (không dùng ```json).
-6. Đọc KỸ toàn bộ đoạn văn, không bỏ qua bảng biểu, số liệu, định nghĩa quan trọng.
+QUY Táº®C Báº®T BUá»˜C:
+1. CHá»ˆ dÃ¹ng thÃ´ng tin cÃ³ trong Ä‘oáº¡n vÄƒn báº£n Ä‘áº§u vÃ o â€” khÃ´ng suy diá»…n, khÃ´ng thÃªm kiáº¿n thá»©c ngoÃ i.
+2. Giá»¯ nguyÃªn tÃªn chÆ°Æ¡ng, má»¥c, sá»‘ thá»© tá»± náº¿u cÃ³ (vÃ­ dá»¥: "ChÆ°Æ¡ng 3", "Má»¥c 2.1").
+3. Náº¿u Ä‘oáº¡n input thá»±c sá»± rá»—ng/khÃ´ng Ä‘á»c Ä‘Æ°á»£c â†’ tráº£ vá» JSON vá»›i chapter_summary: "[THIEU_DU_LIEU]".
+4. KhÃ´ng viáº¿t thÃªm báº¥t ká»³ text nÃ o ngoÃ i JSON.
+5. KhÃ´ng bá»c JSON trong markdown code block (khÃ´ng dÃ¹ng ```json).
+6. Äá»c Ká»¸ toÃ n bá»™ Ä‘oáº¡n vÄƒn, khÃ´ng bá» qua báº£ng biá»ƒu, sá»‘ liá»‡u, Ä‘á»‹nh nghÄ©a quan trá»ng.
 
-CẤU TRÚC JSON ĐẦU RA (tuân thủ chính xác):
+Cáº¤U TRÃšC JSON Äáº¦U RA (tuÃ¢n thá»§ chÃ­nh xÃ¡c):
 {
   "chapters": [
     {
       "chapter_number": "1",
-      "chapter_title": "Tên chương hoặc null nếu không có",
-      "chapter_summary": "Tóm tắt toàn bộ nội dung chương này trong 2-4 câu, bám sát nguồn. Bao gồm số liệu, kết luận chính nếu có.",
+      "chapter_title": "TÃªn chÆ°Æ¡ng hoáº·c null náº¿u khÃ´ng cÃ³",
+      "chapter_summary": "TÃ³m táº¯t toÃ n bá»™ ná»™i dung chÆ°Æ¡ng nÃ y trong 2-4 cÃ¢u, bÃ¡m sÃ¡t nguá»“n. Bao gá»“m sá»‘ liá»‡u, káº¿t luáº­n chÃ­nh náº¿u cÃ³.",
       "sections": [
         {
           "section_number": "1.1",
-          "section_title": "Tên mục",
-          "section_summary": "Tóm tắt nội dung mục này trong 1-3 câu, bám sát nguồn."
+          "section_title": "TÃªn má»¥c",
+          "section_summary": "TÃ³m táº¯t ná»™i dung má»¥c nÃ y trong 1-3 cÃ¢u, bÃ¡m sÃ¡t nguá»“n."
         }
       ]
     }
   ],
   "key_points": [
-    "Ý chính 1 — 1-2 câu, bám sát nguồn.",
-    "Ý chính 2 — 1-2 câu, bám sát nguồn."
+    "Ã chÃ­nh 1 â€” 1-2 cÃ¢u, bÃ¡m sÃ¡t nguá»“n.",
+    "Ã chÃ­nh 2 â€” 1-2 cÃ¢u, bÃ¡m sÃ¡t nguá»“n."
   ],
-  "unclear_parts": "Ghi rõ nếu có đoạn bị cắt/thiếu/lỗi font, ngược lại để chuỗi rỗng."
+  "unclear_parts": "Ghi rÃµ náº¿u cÃ³ Ä‘oáº¡n bá»‹ cáº¯t/thiáº¿u/lá»—i font, ngÆ°á»£c láº¡i Ä‘á»ƒ chuá»—i rá»—ng."
 }
 
-LƯU Ý quan trọng:
-- Nếu đoạn input KHÔNG có cấu trúc chương/mục rõ ràng → tạo 1 chapter với chapter_number: "0", chapter_title: null, sections: [].
-- Mảng sections có thể rỗng [] nếu không có mục con.
-- Trích 3-8 key_points từ đoạn này, ưu tiên định nghĩa, số liệu, kết luận cốt lõi.
-- Không trả về [THIEU_DU_LIEU] nếu đoạn input có nội dung hợp lệ (dù ngắn).
+LÆ¯U Ã quan trá»ng:
+- Náº¿u Ä‘oáº¡n input KHÃ”NG cÃ³ cáº¥u trÃºc chÆ°Æ¡ng/má»¥c rÃµ rÃ ng â†’ táº¡o 1 chapter vá»›i chapter_number: "0", chapter_title: null, sections: [].
+- Máº£ng sections cÃ³ thá»ƒ rá»—ng [] náº¿u khÃ´ng cÃ³ má»¥c con.
+- TrÃ­ch 3-8 key_points tá»« Ä‘oáº¡n nÃ y, Æ°u tiÃªn Ä‘á»‹nh nghÄ©a, sá»‘ liá»‡u, káº¿t luáº­n cá»‘t lÃµi.
+- KhÃ´ng tráº£ vá» [THIEU_DU_LIEU] náº¿u Ä‘oáº¡n input cÃ³ ná»™i dung há»£p lá»‡ (dÃ¹ ngáº¯n).
 """.strip()
 
 
 FINAL_SYSTEM_PROMPT = """
-Bạn là trợ lý tổng hợp tóm tắt học thuật tiếng Việt.
-Bạn nhận một mảng JSON — mỗi phần tử là kết quả tóm tắt của một đoạn (chunk) trong cùng một tài liệu.
+Báº¡n lÃ  trá»£ lÃ½ tá»•ng há»£p tÃ³m táº¯t há»c thuáº­t tiáº¿ng Viá»‡t.
+Báº¡n nháº­n má»™t máº£ng JSON â€” má»—i pháº§n tá»­ lÃ  káº¿t quáº£ tÃ³m táº¯t cá»§a má»™t Ä‘oáº¡n (chunk) trong cÃ¹ng má»™t tÃ i liá»‡u.
 
-NHIỆM VỤ: Hợp nhất tất cả chunks thành một bản tóm tắt HOÀN CHỈNH, không bỏ sót chương/mục nào.
+NHIá»†M Vá»¤: Há»£p nháº¥t táº¥t cáº£ chunks thÃ nh má»™t báº£n tÃ³m táº¯t HOÃ€N CHá»ˆNH, khÃ´ng bá» sÃ³t chÆ°Æ¡ng/má»¥c nÃ o.
 
-QUY TẮC BẮT BUỘC:
-1. CHỈ tổng hợp từ nội dung đã cho — không thêm kiến thức ngoài, không suy diễn.
-2. Hợp nhất các chương/mục trùng số thứ tự từ các chunks khác nhau của cùng một chương.
-3. Giữ nguyên số thứ tự và tên chương/mục gốc, sắp xếp theo thứ tự tăng dần.
-4. Không viết text nào ngoài JSON.
-5. Không bọc JSON trong markdown code block.
-6. Bao phủ ĐẦY ĐỦ tất cả chương/mục xuất hiện trong bất kỳ chunk nào.
+QUY Táº®C Báº®T BUá»˜C:
+1. CHá»ˆ tá»•ng há»£p tá»« ná»™i dung Ä‘Ã£ cho â€” khÃ´ng thÃªm kiáº¿n thá»©c ngoÃ i, khÃ´ng suy diá»…n.
+2. Há»£p nháº¥t cÃ¡c chÆ°Æ¡ng/má»¥c trÃ¹ng sá»‘ thá»© tá»± tá»« cÃ¡c chunks khÃ¡c nhau cá»§a cÃ¹ng má»™t chÆ°Æ¡ng.
+3. Giá»¯ nguyÃªn sá»‘ thá»© tá»± vÃ  tÃªn chÆ°Æ¡ng/má»¥c gá»‘c, sáº¯p xáº¿p theo thá»© tá»± tÄƒng dáº§n.
+4. KhÃ´ng viáº¿t text nÃ o ngoÃ i JSON.
+5. KhÃ´ng bá»c JSON trong markdown code block.
+6. Bao phá»§ Äáº¦Y Äá»¦ táº¥t cáº£ chÆ°Æ¡ng/má»¥c xuáº¥t hiá»‡n trong báº¥t ká»³ chunk nÃ o.
 
-CẤU TRÚC JSON ĐẦU RA (tuân thủ chính xác):
+Cáº¤U TRÃšC JSON Äáº¦U RA (tuÃ¢n thá»§ chÃ­nh xÃ¡c):
 {
   "chapters": [
     {
       "chapter_number": "1",
-      "chapter_title": "Tên chương hoặc null",
-      "chapter_summary": "Tóm tắt đầy đủ chương này trong 3-5 câu, bao quát toàn bộ nội dung, bao gồm số liệu và kết luận chính.",
+      "chapter_title": "TÃªn chÆ°Æ¡ng hoáº·c null",
+      "chapter_summary": "TÃ³m táº¯t Ä‘áº§y Ä‘á»§ chÆ°Æ¡ng nÃ y trong 3-5 cÃ¢u, bao quÃ¡t toÃ n bá»™ ná»™i dung, bao gá»“m sá»‘ liá»‡u vÃ  káº¿t luáº­n chÃ­nh.",
       "sections": [
         {
           "section_number": "1.1",
-          "section_title": "Tên mục",
-          "section_summary": "Tóm tắt nội dung mục, 1-3 câu, bám sát nguồn."
+          "section_title": "TÃªn má»¥c",
+          "section_summary": "TÃ³m táº¯t ná»™i dung má»¥c, 1-3 cÃ¢u, bÃ¡m sÃ¡t nguá»“n."
         }
       ]
     }
   ],
   "key_points": [
-    "Ý chính quan trọng nhất — 12-24 điểm, mỗi điểm 1-2 câu, bám sát nguồn."
+    "Ã chÃ­nh quan trá»ng nháº¥t â€” 12-24 Ä‘iá»ƒm, má»—i Ä‘iá»ƒm 1-2 cÃ¢u, bÃ¡m sÃ¡t nguá»“n."
   ],
   "keywords": [
-    "Thuật ngữ/khái niệm/tên riêng quan trọng nhất — 8-20 từ khoá ngắn"
+    "Thuáº­t ngá»¯/khÃ¡i niá»‡m/tÃªn riÃªng quan trá»ng nháº¥t â€” 8-20 tá»« khoÃ¡ ngáº¯n"
   ],
   "unclear_sections": [
-    "Liệt kê các phần bị thiếu/lỗi/cắt ngắn nếu có, để mảng rỗng [] nếu không có."
+    "Liá»‡t kÃª cÃ¡c pháº§n bá»‹ thiáº¿u/lá»—i/cáº¯t ngáº¯n náº¿u cÃ³, Ä‘á»ƒ máº£ng rá»—ng [] náº¿u khÃ´ng cÃ³."
   ]
 }
 
-HƯỚNG DẪN key_points:
-- 12-24 điểm, ưu tiên ý mang tính kết luận, định nghĩa, số liệu, phương pháp cốt lõi.
-- Mỗi điểm là một câu hoàn chỉnh, có thể đứng độc lập, không viết tắt.
+HÆ¯á»šNG DáºªN key_points:
+- 12-24 Ä‘iá»ƒm, Æ°u tiÃªn Ã½ mang tÃ­nh káº¿t luáº­n, Ä‘á»‹nh nghÄ©a, sá»‘ liá»‡u, phÆ°Æ¡ng phÃ¡p cá»‘t lÃµi.
+- Má»—i Ä‘iá»ƒm lÃ  má»™t cÃ¢u hoÃ n chá»‰nh, cÃ³ thá»ƒ Ä‘á»©ng Ä‘á»™c láº­p, khÃ´ng viáº¿t táº¯t.
 
-HƯỚNG DẪN keywords:
-- Chỉ tên riêng, thuật ngữ chuyên ngành, khái niệm trọng tâm.
-- Không dùng từ phổ thông (như "phương pháp", "kết quả", "hệ thống").
-- Mỗi keyword là 1-4 từ, viết hoa đúng chuẩn.
+HÆ¯á»šNG DáºªN keywords:
+- Chá»‰ tÃªn riÃªng, thuáº­t ngá»¯ chuyÃªn ngÃ nh, khÃ¡i niá»‡m trá»ng tÃ¢m.
+- KhÃ´ng dÃ¹ng tá»« phá»• thÃ´ng (nhÆ° "phÆ°Æ¡ng phÃ¡p", "káº¿t quáº£", "há»‡ thá»‘ng").
+- Má»—i keyword lÃ  1-4 tá»«, viáº¿t hoa Ä‘Ãºng chuáº©n.
 
-HƯỚNG DẪN hợp nhất chapters:
-- Nếu nhiều chunks đều có "Chương 2" → gộp tất cả sections và mở rộng chapter_summary.
-- Loại bỏ trùng lặp, giữ thông tin đầy đủ nhất từ mỗi chunk.
+HÆ¯á»šNG DáºªN há»£p nháº¥t chapters:
+- Náº¿u nhiá»u chunks Ä‘á»u cÃ³ "ChÆ°Æ¡ng 2" â†’ gá»™p táº¥t cáº£ sections vÃ  má»Ÿ rá»™ng chapter_summary.
+- Loáº¡i bá» trÃ¹ng láº·p, giá»¯ thÃ´ng tin Ä‘áº§y Ä‘á»§ nháº¥t tá»« má»—i chunk.
 """.strip()
 
 
 KEYPOINTS_SYSTEM_PROMPT = """
-Trích xuất key_points và keywords từ JSON tóm tắt đầu vào.
+TrÃ­ch xuáº¥t key_points vÃ  keywords tá»« JSON tÃ³m táº¯t Ä‘áº§u vÃ o.
 
-QUY TẮC:
-- Chỉ dùng thông tin có trong đầu vào, không suy diễn.
-- Không viết text nào ngoài JSON.
-- Không bọc JSON trong markdown code block.
-- Không trả về [THIEU_DU_LIEU] nếu đầu vào có nội dung hợp lệ.
+QUY Táº®C:
+- Chá»‰ dÃ¹ng thÃ´ng tin cÃ³ trong Ä‘áº§u vÃ o, khÃ´ng suy diá»…n.
+- KhÃ´ng viáº¿t text nÃ o ngoÃ i JSON.
+- KhÃ´ng bá»c JSON trong markdown code block.
+- KhÃ´ng tráº£ vá» [THIEU_DU_LIEU] náº¿u Ä‘áº§u vÃ o cÃ³ ná»™i dung há»£p lá»‡.
 
-JSON ĐẦU RA (tuân thủ chính xác):
+JSON Äáº¦U RA (tuÃ¢n thá»§ chÃ­nh xÃ¡c):
 {
   "key_points": [
-    "Ý chính 1 — câu hoàn chỉnh, bám sát nguồn.",
-    "Ý chính 2 — câu hoàn chỉnh, bám sát nguồn."
+    "Ã chÃ­nh 1 â€” cÃ¢u hoÃ n chá»‰nh, bÃ¡m sÃ¡t nguá»“n.",
+    "Ã chÃ­nh 2 â€” cÃ¢u hoÃ n chá»‰nh, bÃ¡m sÃ¡t nguá»“n."
   ],
   "keywords": [
-    "Thuật ngữ ngắn 1",
-    "Thuật ngữ ngắn 2"
+    "Thuáº­t ngá»¯ ngáº¯n 1",
+    "Thuáº­t ngá»¯ ngáº¯n 2"
   ]
 }
 
-Trả về 12-24 key_points và 8-20 keywords.
+Tráº£ vá» 12-24 key_points vÃ  8-20 keywords.
 """.strip()
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Helpers
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 SHORT_CHUNK_SYSTEM_PROMPT = """
-Tom tat doan tai lieu thanh JSON thuần.
+Tom tat doan tai lieu thanh JSON thuáº§n.
 Chi dung thong tin trong input, khong suy dien, khong them kien thuc ngoai.
 Giu ten chuong/muc/so thu tu neu co. Khong viet gi ngoai JSON, khong markdown.
 Neu input rong hoac khong doc duoc, cho chapter_summary = "[THIEU_DU_LIEU]".
@@ -251,7 +252,7 @@ def _extract_text(file_name: str, mime_type: str, file_bytes: bytes) -> str:
         return _extract_pdf_text(file_bytes)
     if lower_name.endswith(".docx") or "wordprocessingml" in lower_mime:
         return _extract_docx_text(file_bytes)
-    raise RuntimeError("Chỉ hỗ trợ PDF và DOCX.")
+    raise RuntimeError("Chá»‰ há»— trá»£ PDF vÃ  DOCX.")
 
 
 def _chunk_text(text: str, max_chars: int) -> List[str]:
@@ -285,8 +286,8 @@ def _extract_outline_headings(text: str) -> List[str]:
     lines = [ln.strip() for ln in text.splitlines() if ln and ln.strip()]
     headings: List[str] = []
     patterns = [
-        r"^(chuong|chương)\s+\d+[\.: -].*",
-        r"^(muc|mục)\s+\d+[\.: -].*",
+        r"^(chuong|chÆ°Æ¡ng)\s+\d+[\.: -].*",
+        r"^(muc|má»¥c)\s+\d+[\.: -].*",
         r"^\d+(\.\d+){0,3}\s+.+",
         r"^[ivxlcdm]+\.\s+.+",
     ]
@@ -308,7 +309,7 @@ def _extract_outline_headings(text: str) -> List[str]:
 def _chunk_text_by_headings(text: str, max_chars: int) -> List[str]:
     lines = text.splitlines()
     heading_re = re.compile(
-        r"^((chuong|chương)\s+\d+[\.: -].*|(muc|mục)\s+\d+[\.: -].*|\d+(\.\d+){0,3}\s+.+|[ivxlcdm]+\.\s+.+)$",
+        r"^((chuong|chÆ°Æ¡ng)\s+\d+[\.: -].*|(muc|má»¥c)\s+\d+[\.: -].*|\d+(\.\d+){0,3}\s+.+|[ivxlcdm]+\.\s+.+)$",
         flags=re.IGNORECASE,
     )
     sections: List[List[str]] = []
@@ -353,30 +354,30 @@ def _chunk_text_by_headings(text: str, max_chars: int) -> List[str]:
 def _validate_source_text(text: str) -> None:
     words = text.split()
     if len(words) < 80:
-        raise RuntimeError("Nội dung trích xuất quá ngắn để tóm tắt đầy đủ.")
+        raise RuntimeError("Ná»™i dung trÃ­ch xuáº¥t quÃ¡ ngáº¯n Ä‘á»ƒ tÃ³m táº¯t Ä‘áº§y Ä‘á»§.")
     alpha_count = sum(1 for ch in text if ch.isalpha())
     printable_count = sum(1 for ch in text if ch.isprintable())
     if printable_count == 0 or (alpha_count / max(printable_count, 1)) < 0.25:
-        raise RuntimeError("Nội dung trích xuất chất lượng thấp (có thể là PDF scan/lỗi font).")
+        raise RuntimeError("Ná»™i dung trÃ­ch xuáº¥t cháº¥t lÆ°á»£ng tháº¥p (cÃ³ thá»ƒ lÃ  PDF scan/lá»—i font).")
     if text.count("\ufffd") > 10:
-        raise RuntimeError("Nội dung trích xuất bị lỗi ký tự, không thể tóm tắt chính xác.")
+        raise RuntimeError("Ná»™i dung trÃ­ch xuáº¥t bá»‹ lá»—i kÃ½ tá»±, khÃ´ng thá»ƒ tÃ³m táº¯t chÃ­nh xÃ¡c.")
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # JSON parse / validate / repair helpers
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _safe_parse_json(raw: str) -> Dict:
-    """Strip markdown fences nếu model vẫn trả về ```json, rồi parse."""
+    """Strip markdown fences náº¿u model váº«n tráº£ vá» ```json, rá»“i parse."""
     text = (raw or "").strip()
-    # Bỏ ```json ... ``` nếu có
+    # Bá» ```json ... ``` náº¿u cÃ³
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     text = text.strip()
-    # Tìm JSON object đầu tiên trong response (phòng khi model thêm prose trước)
+    # TÃ¬m JSON object Ä‘áº§u tiÃªn trong response (phÃ²ng khi model thÃªm prose trÆ°á»›c)
     match = re.search(r"\{[\s\S]*\}", text)
     if not match:
-        raise RuntimeError("Không tìm thấy JSON hợp lệ trong response.")
+        raise RuntimeError("KhÃ´ng tÃ¬m tháº¥y JSON há»£p lá»‡ trong response.")
     candidate = match.group(0).strip()
     try:
         return _json.loads(candidate)
@@ -388,26 +389,26 @@ def _safe_parse_json(raw: str) -> Dict:
 
 
 def _validate_summary_json(data: Dict) -> None:
-    """Kiểm tra cấu trúc JSON tóm tắt tổng hợp."""
+    """Kiá»ƒm tra cáº¥u trÃºc JSON tÃ³m táº¯t tá»•ng há»£p."""
     if not isinstance(data, dict):
-        raise RuntimeError("Response không phải dict JSON.")
+        raise RuntimeError("Response khÃ´ng pháº£i dict JSON.")
     chapters = data.get("chapters")
     if not isinstance(chapters, list) or len(chapters) == 0:
-        raise RuntimeError("JSON thiếu trường 'chapters' hoặc rỗng.")
+        raise RuntimeError("JSON thiáº¿u trÆ°á»ng 'chapters' hoáº·c rá»—ng.")
     key_points = data.get("key_points")
     if not isinstance(key_points, list) or len(key_points) < 3:
-        raise RuntimeError("JSON thiếu 'key_points' hoặc quá ít điểm.")
-    # Kiểm tra THIEU_DU_LIEU lan rộng
+        raise RuntimeError("JSON thiáº¿u 'key_points' hoáº·c quÃ¡ Ã­t Ä‘iá»ƒm.")
+    # Kiá»ƒm tra THIEU_DU_LIEU lan rá»™ng
     raw_str = _json.dumps(data, ensure_ascii=False).lower()
     thieu_count = raw_str.count("thieu_du_lieu")
     if thieu_count > len(chapters) // 2:
-        raise RuntimeError("Tóm tắt chưa đầy đủ — quá nhiều [THIEU_DU_LIEU].")
+        raise RuntimeError("TÃ³m táº¯t chÆ°a Ä‘áº§y Ä‘á»§ â€” quÃ¡ nhiá»u [THIEU_DU_LIEU].")
 
 
 def _merge_chunk_jsons(chunk_raws: List[str]) -> List[Dict]:
     """
-    Parse từng chunk raw string thành dict.
-    Nếu parse lỗi → giữ lại dạng {"raw_text": ...} để FINAL prompt vẫn xử lý được.
+    Parse tá»«ng chunk raw string thÃ nh dict.
+    Náº¿u parse lá»—i â†’ giá»¯ láº¡i dáº¡ng {"raw_text": ...} Ä‘á»ƒ FINAL prompt váº«n xá»­ lÃ½ Ä‘Æ°á»£c.
     """
     result = []
     for raw in chunk_raws:
@@ -505,15 +506,17 @@ def _fallback_summary_json_from_chunks(chunk_dicts: List[Dict]) -> Dict:
     }
 
 
-def _repair_summary_json(client: Groq, raw: str) -> Dict:
-    """Sửa JSON lỗi cấu trúc bằng cách gọi lại model."""
+def _repair_summary_json(client: genai.Client, raw: str) -> Dict:
+    """Sá»­a JSON lá»—i cáº¥u trÃºc báº±ng cÃ¡ch gá»i láº¡i model."""
+    if not bool(getattr(settings, "SUMMARY_ENABLE_MODEL_REPAIR", False)):
+        raise RuntimeError("Model repair is disabled.")
     fixed_raw = _chat(
         client=client,
         system_prompt=(
-            "Chuyển đổi nội dung sau thành JSON hợp lệ theo đúng cấu trúc yêu cầu. "
-            "KHÔNG thay đổi nội dung, KHÔNG thêm kiến thức mới. "
-            "Trả về JSON thuần, không có markdown, không có text thừa. "
-            'Cấu trúc bắt buộc: {"chapters": [...], "key_points": [...], '
+            "Chuyá»ƒn Ä‘á»•i ná»™i dung sau thÃ nh JSON há»£p lá»‡ theo Ä‘Ãºng cáº¥u trÃºc yÃªu cáº§u. "
+            "KHÃ”NG thay Ä‘á»•i ná»™i dung, KHÃ”NG thÃªm kiáº¿n thá»©c má»›i. "
+            "Tráº£ vá» JSON thuáº§n, khÃ´ng cÃ³ markdown, khÃ´ng cÃ³ text thá»«a. "
+            'Cáº¥u trÃºc báº¯t buá»™c: {"chapters": [...], "key_points": [...], '
             '"keywords": [...], "unclear_sections": []}'
         ),
         user_prompt=raw[:4000],
@@ -523,24 +526,24 @@ def _repair_summary_json(client: Groq, raw: str) -> Dict:
 
 
 def _parse_key_points_from_json(data: Dict) -> List[str]:
-    """Lấy key_points từ JSON tóm tắt đã parse."""
+    """Láº¥y key_points tá»« JSON tÃ³m táº¯t Ä‘Ã£ parse."""
     return [str(p).strip() for p in data.get("key_points", []) if str(p).strip()]
 
 
 def _parse_keywords_from_json(data: Dict) -> List[str]:
-    """Lấy keywords từ JSON tóm tắt đã parse."""
+    """Láº¥y keywords tá»« JSON tÃ³m táº¯t Ä‘Ã£ parse."""
     return [str(k).strip() for k in data.get("keywords", []) if str(k).strip()]
 
 
 def _summary_json_to_text(data: Dict) -> str:
     """
-    Chuyển JSON tóm tắt thành plain text (tương thích DB legacy / hiển thị đơn giản).
+    Chuyá»ƒn JSON tÃ³m táº¯t thÃ nh plain text (tÆ°Æ¡ng thÃ­ch DB legacy / hiá»ƒn thá»‹ Ä‘Æ¡n giáº£n).
     """
     lines = []
     for ch in data.get("chapters", []):
         num = ch.get("chapter_number", "")
         title = ch.get("chapter_title") or ""
-        header = f"Chương {num}" if num and str(num) != "0" else ""
+        header = f"ChÆ°Æ¡ng {num}" if num and str(num) != "0" else ""
         if title:
             header = f"{header}: {title}" if header else title
         if header:
@@ -550,7 +553,7 @@ def _summary_json_to_text(data: Dict) -> str:
         for sec in ch.get("sections", []):
             sec_num = sec.get("section_number", "")
             sec_title = sec.get("section_title") or ""
-            sec_header = f"Mục {sec_num}" if sec_num else ""
+            sec_header = f"Má»¥c {sec_num}" if sec_num else ""
             if sec_title:
                 sec_header = f"{sec_header}: {sec_title}" if sec_header else sec_title
             if sec_header:
@@ -558,17 +561,17 @@ def _summary_json_to_text(data: Dict) -> str:
             if sec.get("section_summary"):
                 lines.append(sec["section_summary"])
     if data.get("key_points"):
-        lines.append("\n## Các ý chính")
+        lines.append("\n## CÃ¡c Ã½ chÃ­nh")
         lines.extend([f"- {p}" for p in data["key_points"]])
     if data.get("keywords"):
-        lines.append("\n## Từ khoá")
+        lines.append("\n## Tá»« khoÃ¡")
         lines.append(", ".join(data["keywords"]))
     return "\n\n".join(lines).strip()
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Sanitize helpers
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _sanitize_summary_text(summary_text: str) -> str:
     text = (summary_text or "").strip()
@@ -597,9 +600,9 @@ def _sanitize_key_points(points: List[str]) -> List[str]:
 
 
 def _sanitize_summary_json(data: Dict) -> Dict:
-    """Làm sạch các trường trong summary JSON."""
+    """LÃ m sáº¡ch cÃ¡c trÆ°á»ng trong summary JSON."""
     cleaned = dict(data)
-    # Làm sạch chapters
+    # LÃ m sáº¡ch chapters
     chapters = []
     for ch in cleaned.get("chapters", []):
         ch_clean = dict(ch)
@@ -620,9 +623,9 @@ def _sanitize_summary_json(data: Dict) -> Dict:
     return cleaned
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Coverage audit
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _normalize_heading_for_match(s: str) -> str:
     s = unicodedata.normalize("NFKD", s.lower())
@@ -659,9 +662,9 @@ def _coverage_audit(source_text: str, summary_text: str) -> Dict:
     }
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Storage helpers
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _build_summary_json_payload(
     *,
@@ -703,50 +706,60 @@ def _upload_summary_json(
         content_type="application/json; charset=utf-8",
     )
     if status_code >= 400:
-        raise RuntimeError(f"Không lưu được file JSON summary lên Supabase Storage: {res}")
+        raise RuntimeError(f"KhÃ´ng lÆ°u Ä‘Æ°á»£c file JSON summary lÃªn Supabase Storage: {res}")
     return object_path
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Groq client & chat helper
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Gemini client & chat helper
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-def _groq_client() -> Groq:
-    api_key = getattr(settings, "GROQ_API_KEY", "").strip()
+def _gemini_client() -> genai.Client:
+    api_key = getattr(settings, "GEMINI_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError("GROQ_API_KEY chưa được cấu hình.")
-    return Groq(api_key=api_key)
+        raise RuntimeError("GEMINI_API_KEY chua duoc cau hinh.")
+    return genai.Client(api_key=api_key)
 
 
-def _chat(client: Groq, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
-    """
-    Gọi Groq API với retry khi gặp rate-limit (429).
-    """
-    model       = getattr(settings, "GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
-    max_retries = int(getattr(settings, "GROQ_RETRY_MAX", "3"))
-    base_sleep  = float(getattr(settings, "GROQ_RETRY_BASE_SECONDS", "8"))
+def _extract_gemini_text(response) -> str:
+    content = str(getattr(response, "text", "") or "").strip()
+    if content:
+        return content
+    texts: List[str] = []
+    for candidate in getattr(response, "candidates", []) or []:
+        parts = getattr(getattr(candidate, "content", None), "parts", None) or []
+        for part in parts:
+            part_text = getattr(part, "text", None)
+            if part_text:
+                texts.append(str(part_text).strip())
+    return "\n".join([t for t in texts if t]).strip()
+
+
+def _chat(client: genai.Client, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
+    model = getattr(settings, "GEMINI_MODEL", "gemini-3.1-flash-lite")
+    max_retries = int(getattr(settings, "GEMINI_RETRY_MAX", "3"))
+    base_sleep = float(getattr(settings, "GEMINI_RETRY_BASE_SECONDS", "8"))
 
     last_exc = None
     for attempt in range(max_retries):
         try:
-            response = client.chat.completions.create(
+            response = client.models.generate_content(
                 model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user",   "content": user_prompt},
-                ],
-                max_tokens=max_tokens,
-                temperature=0.2,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=0.2,
+                    max_output_tokens=max_tokens,
+                ),
             )
-            content = (response.choices[0].message.content or "").strip()
+            content = _extract_gemini_text(response)
             if not content:
-                raise RuntimeError("Groq trả về nội dung rỗng.")
+                raise RuntimeError("Gemini tra ve noi dung rong.")
             return content
-
         except Exception as exc:
             last_exc = exc
             msg = str(exc).lower()
-            if "rate_limit" in msg or "429" in msg or "too many" in msg:
+            if "rate_limit" in msg or "429" in msg or "too many" in msg or "resource_exhausted" in msg:
                 if attempt < max_retries - 1:
                     time.sleep(base_sleep * (2 ** attempt))
                     continue
@@ -754,28 +767,73 @@ def _chat(client: Groq, system_prompt: str, user_prompt: str, max_tokens: int) -
 
     if last_exc:
         raise last_exc
-    raise RuntimeError("Groq: không có response sau retry.")
+    raise RuntimeError("Gemini: khong co response sau retry.")
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# PDF scan fallback — chia trang, extract text, tóm tắt từng batch
-# ──────────────────────────────────────────────────────────────────────────────
+def _chat_with_document(
+    client: genai.Client,
+    system_prompt: str,
+    user_prompt: str,
+    file_bytes: bytes,
+    mime_type: str,
+    max_tokens: int,
+) -> str:
+    model = getattr(settings, "GEMINI_MODEL", "gemini-3.1-flash-lite")
+    max_retries = int(getattr(settings, "GEMINI_RETRY_MAX", "3"))
+    base_sleep = float(getattr(settings, "GEMINI_RETRY_BASE_SECONDS", "8"))
+
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=[
+                    types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
+                    user_prompt,
+                ],
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=0.2,
+                    max_output_tokens=max_tokens,
+                ),
+            )
+            content = _extract_gemini_text(response)
+            if not content:
+                raise RuntimeError("Gemini tra ve noi dung rong khi doc tai lieu.")
+            return content
+        except Exception as exc:
+            last_exc = exc
+            msg = str(exc).lower()
+            if "rate_limit" in msg or "429" in msg or "too many" in msg or "resource_exhausted" in msg:
+                if attempt < max_retries - 1:
+                    time.sleep(base_sleep * (2 ** attempt))
+                    continue
+            raise
+
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Gemini: khong co response sau retry khi doc tai lieu.")
+
+
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# PDF scan fallback â€” chia trang, extract text, tÃ³m táº¯t tá»«ng batch
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _summarize_pdf_pages_via_text(
     *,
-    client: Groq,
+    client: genai.Client,
     file_bytes: bytes,
     job_id: str,
     max_pages_per_chunk: int = 8,
 ) -> Dict:
     """
-    Fallback cho PDF scan hoặc PDF không extract được text tốt:
-    chia trang theo batch, extract text từng batch, tóm tắt bằng Groq.
+    Doc PDF bang Gemini native document input theo tung batch trang,
+    sau do tong hop ve JSON cuoi cung.
     """
     reader = PdfReader(io.BytesIO(file_bytes))
     total_pages = len(reader.pages)
     if total_pages <= 0:
-        raise RuntimeError("PDF không có trang hợp lệ.")
+        raise RuntimeError("PDF khong co trang hop le.")
 
     page_groups: List[tuple] = []
     for start in range(0, total_pages, max_pages_per_chunk):
@@ -786,45 +844,34 @@ def _summarize_pdf_pages_via_text(
     total_groups = len(page_groups)
 
     for idx, (start, end) in enumerate(page_groups, start=1):
-        batch_text = "\n\n".join(
-            (reader.pages[p].extract_text() or "").strip()
-            for p in range(start, end)
-        )
-        batch_text = _cleanup_text(batch_text)
+        writer = PdfWriter()
+        for page_idx in range(start, end):
+            writer.add_page(reader.pages[page_idx])
 
-        if len(batch_text.split()) < 20:
-            # Tạo chunk JSON giả cho batch không có text
-            chunk_raws.append(_json.dumps({
-                "chapters": [{
-                    "chapter_number": "0",
-                    "chapter_title": None,
-                    "chapter_summary": f"[Trang {start+1}-{end}: không trích được text]",
-                    "sections": []
-                }],
-                "key_points": [],
-                "unclear_parts": f"Trang {start+1}-{end} không trích được text (PDF scan hoặc lỗi font)."
-            }, ensure_ascii=False))
-        else:
-            raw = _chat(
-                client=client,
-                system_prompt=CHUNK_SYSTEM_PROMPT,
-                user_prompt=(
-                    f"[TRANG {start+1}-{end}/{total_pages}] "
-                    "Đọc TOÀN BỘ nội dung các trang này và tóm tắt đầy đủ. "
-                    "Không bỏ sót bảng biểu, số liệu, định nghĩa.\n\n"
-                    + batch_text[:6000]
-                ),
-                max_tokens=int(getattr(settings, "SUMMARY_CHUNK_MAX_TOKENS", "650")),
-            )
-            chunk_raws.append(raw)
+        buf = io.BytesIO()
+        writer.write(buf)
+        chunk_bytes = buf.getvalue()
+
+        raw = _chat_with_document(
+            client=client,
+            system_prompt=CHUNK_SYSTEM_PROMPT,
+            user_prompt=(
+                f"[TRANG {start + 1}-{end}/{total_pages}] "
+                "Doc day du cac trang PDF nay va tom tat thanh JSON theo schema. "
+                "Khong bo sot bang bieu, so lieu, hinh ve, dinh nghia, heading."
+            ),
+            file_bytes=chunk_bytes,
+            mime_type="application/pdf",
+            max_tokens=int(getattr(settings, "SUMMARY_CHUNK_MAX_TOKENS", "650")),
+        )
+        chunk_raws.append(raw)
 
         progress = min(80, 20 + int((idx / total_groups) * 55))
         if idx == total_groups or idx % 2 == 0:
             supabase_client.update_summary_job(job_id, {"progress": progress})
 
-    # Gộp tất cả chunks → gọi FINAL
     merged_chunks = _merge_chunk_jsons(chunk_raws)
-    merged_input  = _json.dumps(merged_chunks, ensure_ascii=False)
+    merged_input = _json.dumps(merged_chunks, ensure_ascii=False)
 
     final_raw = _chat(
         client=client,
@@ -835,18 +882,18 @@ def _summarize_pdf_pages_via_text(
     try:
         summary_data = _safe_parse_json(final_raw)
     except Exception:
-        try:
-            summary_data = _repair_summary_json(client, final_raw)
-        except Exception:
-            summary_data = _fallback_summary_json_from_chunks(merged_chunks)
+        summary_data = _fallback_summary_json_from_chunks(merged_chunks)
 
     try:
         _validate_summary_json(summary_data)
     except RuntimeError:
-        try:
-            summary_data = _repair_summary_json(client, final_raw)
-            _validate_summary_json(summary_data)
-        except Exception:
+        if bool(getattr(settings, "SUMMARY_ENABLE_MODEL_REPAIR", False)):
+            try:
+                summary_data = _repair_summary_json(client, final_raw)
+                _validate_summary_json(summary_data)
+            except Exception:
+                summary_data = _fallback_summary_json_from_chunks(merged_chunks)
+        else:
             summary_data = _fallback_summary_json_from_chunks(merged_chunks)
 
     summary_data = _sanitize_summary_json(summary_data)
@@ -871,14 +918,13 @@ def _summarize_pdf_pages_via_text(
         "source_text": source_text,
     }
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Main summarize pipeline — chunk by headings/paragraphs, retry nếu coverage thấp
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Main summarize pipeline â€” chunk by headings/paragraphs, retry náº¿u coverage tháº¥p
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _summarize_with_chunks_retry(
     *,
-    client: Groq,
+    client: genai.Client,
     text: str,
     job_id: str,
 ) -> Dict:
@@ -889,7 +935,7 @@ def _summarize_with_chunks_retry(
         {"max_chars": max_chunk_chars, "extra_prompt": ""},
         {
             "max_chars": max(3000, int(max_chunk_chars * 0.75)),
-            "extra_prompt": "Tập trung bao phủ đầy đủ từng chương/mục, không bỏ sót.",
+            "extra_prompt": "Táº­p trung bao phá»§ Ä‘áº§y Ä‘á»§ tá»«ng chÆ°Æ¡ng/má»¥c, khÃ´ng bá» sÃ³t.",
         },
     ]
     max_attempts  = int(getattr(settings, "SUMMARY_RETRY_ATTEMPTS", "1"))
@@ -911,7 +957,7 @@ def _summarize_with_chunks_retry(
         if not chunks:
             chunks = _chunk_text(text, max_chars=int(plan["max_chars"]))
         if not chunks:
-            raise RuntimeError("Không tách được chunk.")
+            raise RuntimeError("KhÃ´ng tÃ¡ch Ä‘Æ°á»£c chunk.")
 
         chunk_raws: List[str] = []
         total = len(chunks)
@@ -921,7 +967,7 @@ def _summarize_with_chunks_retry(
                 client=client,
                 system_prompt=CHUNK_SYSTEM_PROMPT,
                 user_prompt=(
-                    f"[PHẦN {idx}/{total}] {plan['extra_prompt']}\n\n{chunk}"
+                    f"[PHáº¦N {idx}/{total}] {plan['extra_prompt']}\n\n{chunk}"
                 ),
                 max_tokens=int(getattr(settings, "SUMMARY_CHUNK_MAX_TOKENS", "650")),
             )
@@ -930,7 +976,7 @@ def _summarize_with_chunks_retry(
             if idx == total or idx % 2 == 0:
                 supabase_client.update_summary_job(job_id, {"progress": progress})
 
-        # Gộp các chunk JSON → gọi FINAL
+        # Gá»™p cÃ¡c chunk JSON â†’ gá»i FINAL
         merged_chunks = _merge_chunk_jsons(chunk_raws)
         merged_input  = _json.dumps(merged_chunks, ensure_ascii=False)
 
@@ -943,18 +989,18 @@ def _summarize_with_chunks_retry(
         try:
             summary_data = _safe_parse_json(final_raw)
         except Exception:
-            try:
-                summary_data = _repair_summary_json(client, final_raw)
-            except Exception:
-                summary_data = _fallback_summary_json_from_chunks(merged_chunks)
+            summary_data = _fallback_summary_json_from_chunks(merged_chunks)
 
         try:
             _validate_summary_json(summary_data)
         except RuntimeError:
-            try:
-                summary_data = _repair_summary_json(client, final_raw)
-                _validate_summary_json(summary_data)
-            except Exception:
+            if bool(getattr(settings, "SUMMARY_ENABLE_MODEL_REPAIR", False)):
+                try:
+                    summary_data = _repair_summary_json(client, final_raw)
+                    _validate_summary_json(summary_data)
+                except Exception:
+                    summary_data = _fallback_summary_json_from_chunks(merged_chunks)
+            else:
                 summary_data = _fallback_summary_json_from_chunks(merged_chunks)
 
         summary_data = _sanitize_summary_json(summary_data)
@@ -981,27 +1027,27 @@ def _summarize_with_chunks_retry(
     return best
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Main entry point
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def process_summary_job(job_id: str) -> None:
     claimed_row, claimed_status = supabase_client.claim_summary_job(job_id)
     if claimed_status >= 400:
-        raise RuntimeError("Không claim được job để xử lý.")
+        raise RuntimeError("KhÃ´ng claim Ä‘Æ°á»£c job Ä‘á»ƒ xá»­ lÃ½.")
     if not claimed_row:
         return
 
     try:
         bucket = getattr(settings, "SUPABASE_STORAGE_BUCKET", "study-documents")
 
-        # ── 1. Tải file ──────────────────────────────────────────────────────
+        # â”€â”€ 1. Táº£i file â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         blob, blob_status = supabase_client.download_storage_file(
             bucket=bucket,
             object_path=str(claimed_row.get("storage_path", "")),
         )
         if blob_status >= 400 or not isinstance(blob, (bytes, bytearray)):
-            raise RuntimeError("Không tải được file từ Supabase Storage.")
+            raise RuntimeError("KhÃ´ng táº£i Ä‘Æ°á»£c file tá»« Supabase Storage.")
 
         file_name  = str(claimed_row.get("file_name", ""))
         user_id    = str(claimed_row.get("id_user", ""))
@@ -1010,20 +1056,20 @@ def process_summary_job(job_id: str) -> None:
         lower_mime = mime_type.lower()
         is_pdf     = lower_name.endswith(".pdf") or ("pdf" in lower_mime)
 
-        # ── 2. Extract text ──────────────────────────────────────────────────
-        text = _extract_text(file_name, mime_type, bytes(blob))
-        text = _cleanup_text(text)
-        if not text:
-            raise RuntimeError("Không trích xuất được nội dung file.")
-
+        text = ""
         max_source_chars = int(getattr(settings, "SUMMARY_MAX_SOURCE_CHARS", 120000))
-        if len(text) > max_source_chars:
-            text = text[:max_source_chars]
+
+        if not is_pdf:
+            text = _extract_text(file_name, mime_type, bytes(blob))
+            text = _cleanup_text(text)
+            if not text:
+                raise RuntimeError("Khong trich xuat duoc noi dung file.")
+            if len(text) > max_source_chars:
+                text = text[:max_source_chars]
 
         supabase_client.update_summary_job(job_id, {"progress": 20})
 
-        # ── 3. Tóm tắt ──────────────────────────────────────────────────────
-        client: Groq = _groq_client()
+        client: genai.Client = _gemini_client()
         coverage: Dict = {
             "coverage_ratio": 0.0,
             "source_headings": [],
@@ -1035,33 +1081,20 @@ def process_summary_job(job_id: str) -> None:
 
         if is_pdf:
             supabase_client.update_summary_job(job_id, {"progress": 15})
-            all_pages   = _extract_pdf_pages(bytes(blob))
-            page_text   = _cleanup_text("\n\n".join(all_pages))
-            can_extract = _is_pdf_text_extractable(all_pages)
-
-            if can_extract:
-                _validate_source_text(page_text)
-                summarized = _summarize_with_chunks_retry(
-                    client=client, text=page_text, job_id=job_id
-                )
-                summary_data       = summarized["summary_data"]
-                final_summary_text = summarized["summary_text"]
-                coverage           = summarized["coverage"]
-                text               = page_text
-            else:
-                # PDF scan fallback
-                summarized = _summarize_pdf_pages_via_text(
-                    client=client,
-                    file_bytes=bytes(blob),
-                    job_id=job_id,
-                    max_pages_per_chunk=int(
-                        getattr(settings, "SUMMARY_PDF_PAGES_PER_CHUNK", "12")
-                    ),
-                )
-                summary_data       = summarized["summary_data"]
-                final_summary_text = summarized["summary_text"]
-                coverage           = summarized["coverage"]
-                text               = summarized.get("source_text") or page_text or text
+            summarized = _summarize_pdf_pages_via_text(
+                client=client,
+                file_bytes=bytes(blob),
+                job_id=job_id,
+                max_pages_per_chunk=int(
+                    getattr(settings, "SUMMARY_PDF_PAGES_PER_CHUNK", "12")
+                ),
+            )
+            summary_data = summarized["summary_data"]
+            final_summary_text = summarized["summary_text"]
+            coverage = summarized["coverage"]
+            text = summarized.get("source_text") or text
+            if text and len(text) > max_source_chars:
+                text = text[:max_source_chars]
 
         else:
             # DOCX
@@ -1073,7 +1106,7 @@ def process_summary_job(job_id: str) -> None:
             final_summary_text = summarized["summary_text"]
             coverage           = summarized["coverage"]
 
-        # ── 4. Key points & keywords ─────────────────────────────────────────
+        # â”€â”€ 4. Key points & keywords â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         supabase_client.update_summary_job(job_id, {"progress": 88})
 
         key_points: List[str] = _sanitize_key_points(
@@ -1081,8 +1114,8 @@ def process_summary_job(job_id: str) -> None:
         )
         keywords: List[str] = _parse_keywords_from_json(summary_data)
 
-        # Fallback: nếu key_points rỗng → gọi KEYPOINTS_SYSTEM_PROMPT
-        if not key_points:
+        # Fallback: náº¿u key_points rá»—ng â†’ gá»i KEYPOINTS_SYSTEM_PROMPT
+        if not key_points and bool(getattr(settings, "SUMMARY_ENABLE_KEYPOINTS_FALLBACK", False)):
             raw_kp = _chat(
                 client=client,
                 system_prompt=KEYPOINTS_SYSTEM_PROMPT,
@@ -1095,7 +1128,7 @@ def process_summary_job(job_id: str) -> None:
                 if not keywords:
                     keywords = [str(k).strip() for k in kp_data.get("keywords", []) if str(k).strip()]
             except Exception:
-                # Fallback text parse nếu JSON lỗi
+                # Fallback text parse náº¿u JSON lá»—i
                 key_points = _sanitize_key_points(
                     [
                         re.sub(r"^[^\w\[]+\s*", "", ln.strip())
@@ -1105,11 +1138,11 @@ def process_summary_job(job_id: str) -> None:
                 )
 
         if not key_points:
-            raise RuntimeError("Không trích được các ý chính đạt yêu cầu.")
+            raise RuntimeError("KhÃ´ng trÃ­ch Ä‘Æ°á»£c cÃ¡c Ã½ chÃ­nh Ä‘áº¡t yÃªu cáº§u.")
 
         final_summary_text = _sanitize_summary_text(final_summary_text)
 
-        # ── 5. Lưu DB ────────────────────────────────────────────────────────
+        # â”€â”€ 5. LÆ°u DB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         supabase_client.update_summary_job(
             job_id,
             {
@@ -1125,7 +1158,7 @@ def process_summary_job(job_id: str) -> None:
             },
         )
 
-        # ── 6. Lưu JSON file lên Storage (non-blocking) ──────────────────────
+        # â”€â”€ 6. LÆ°u JSON file lÃªn Storage (non-blocking) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         try:
             payload = _build_summary_json_payload(
                 job_id=job_id,
@@ -1144,7 +1177,7 @@ def process_summary_job(job_id: str) -> None:
                 payload=payload,
             )
         except Exception:
-            # Không fail cả job nếu lưu JSON lỗi
+            # KhÃ´ng fail cáº£ job náº¿u lÆ°u JSON lá»—i
             pass
 
     except Exception as exc:
@@ -1154,6 +1187,9 @@ def process_summary_job(job_id: str) -> None:
                 "status": "failed",
                 "progress": 100,
                 "finished_at": now_iso(),
-                "error_message": str(exc)[:1000] if str(exc) else "Không rõ lỗi.",
+                "error_message": str(exc)[:1000] if str(exc) else "KhÃ´ng rÃµ lá»—i.",
             },
         )
+
+
+

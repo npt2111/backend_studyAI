@@ -78,11 +78,17 @@ class UploadDocumentApiView(APIView):
 
         try:
             file_bytes = upload.read()
-            # Chi upload Storage khi file doc co the doc/trich xuat thanh cong.
-            extracted_text = _cleanup_text(_extract_text(file_name, mime_type, file_bytes))
-            if not extracted_text:
+            if ext == ".docx":
+                # DOCX van validate local truoc khi luu.
+                extracted_text = _cleanup_text(_extract_text(file_name, mime_type, file_bytes))
+                if not extracted_text:
+                    return Response(
+                        {"message": "Khong trich xuat duoc noi dung file."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            elif not file_bytes:
                 return Response(
-                    {"message": "Khong trich xuat duoc noi dung file."},
+                    {"message": "File rong hoac khong doc duoc."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
