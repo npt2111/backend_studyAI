@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 from typing import Dict
 from uuid import uuid4
 
@@ -14,7 +14,7 @@ from config.services.supabase_client import SupabaseConfigError
 
 from .background import submit_summary_job
 from .serializers import JobListQuerySerializer, JobQuerySerializer, UploadDocumentSerializer
-from .services import _cleanup_text, _extract_text, normalize_job, now_iso
+from .services import _validate_document_file, normalize_job, now_iso
 
 ALLOWED_EXTS = {".pdf", ".docx"}
 
@@ -78,19 +78,13 @@ class UploadDocumentApiView(APIView):
 
         try:
             file_bytes = upload.read()
-            if ext == ".docx":
-                # DOCX van validate local truoc khi luu.
-                extracted_text = _cleanup_text(_extract_text(file_name, mime_type, file_bytes))
-                if not extracted_text:
-                    return Response(
-                        {"message": "Khong trich xuat duoc noi dung file."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-            elif not file_bytes:
+            if not file_bytes:
                 return Response(
                     {"message": "File rong hoac khong doc duoc."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+
+            _validate_document_file(file_name, mime_type, file_bytes)
 
             storage_payload, storage_status = supabase_client.upload_storage_file(
                 bucket=getattr(settings, "SUPABASE_STORAGE_BUCKET", "study-documents"),
@@ -243,3 +237,6 @@ class RetrySummaryJobApiView(APIView):
 
         except SupabaseConfigError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
