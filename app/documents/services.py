@@ -1,5 +1,6 @@
 ﻿import io
 import json as _json
+import logging
 import time
 import re
 import unicodedata
@@ -15,6 +16,8 @@ from google.genai import types
 from pypdf import PdfReader, PdfWriter
 
 from config.services import supabase_client
+
+logger = logging.getLogger(__name__)
 
 
 CHUNK_SYSTEM_PROMPT = """
@@ -267,8 +270,8 @@ def _extract_pdf_text(file_bytes: bytes) -> str:
         text = _docling_parse_text("document.pdf", "application/pdf", file_bytes, force_full_page_ocr=False)
         if text:
             return text
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Docling PDF parse failed; falling back to pypdf extract: %s", exc)
 
     reader = PdfReader(io.BytesIO(file_bytes))
     chunks = [(page.extract_text() or "").strip() for page in reader.pages]
@@ -298,8 +301,8 @@ def _extract_docx_text(file_bytes: bytes) -> str:
         )
         if text:
             return text
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Docling DOCX parse failed; falling back to python-docx: %s", exc)
 
     doc = Document(io.BytesIO(file_bytes))
     blocks: List[str] = []
@@ -319,7 +322,7 @@ def _extract_text(file_name: str, mime_type: str, file_bytes: bytes) -> str:
         return _extract_pdf_text(file_bytes)
     if lower_name.endswith(".docx") or "wordprocessingml" in lower_mime:
         return _extract_docx_text(file_bytes)
-    raise RuntimeError("Chá»‰ há»— trá»£ PDF vÃ  DOCX.")
+    raise RuntimeError("Chi ho tro PDF va DOCX.")
 
 
 def _extract_pdf_text_with_ocr(file_bytes: bytes) -> str:
@@ -332,9 +335,31 @@ def _extract_pdf_text_with_ocr(file_bytes: bytes) -> str:
         )
         if text:
             return text
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Docling PDF OCR parse failed; falling back to standard PDF parse: %s", exc)
     return _extract_pdf_text(file_bytes)
+
+
+def _validate_document_file(file_name: str, mime_type: str, file_bytes: bytes) -> None:
+    lower_name = (file_name or "").lower()
+    lower_mime = (mime_type or "").lower()
+
+    if lower_name.endswith(".pdf") or "pdf" in lower_mime:
+        try:
+            reader = PdfReader(io.BytesIO(file_bytes))
+            if len(reader.pages) <= 0:
+                raise RuntimeError("PDF khong co trang hop le.")
+        except Exception as exc:
+            raise RuntimeError("PDF khong hop le hoac bi hong.") from exc
+        return
+
+    if lower_name.endswith(".docx") or "wordprocessingml" in lower_mime:
+        text = _cleanup_text(_extract_docx_text(file_bytes))
+        if not text:
+            raise RuntimeError("Khong trich xuat duoc noi dung file DOCX.")
+        return
+
+    raise RuntimeError("Chi ho tro PDF va DOCX.")
 
 
 def _chunk_text(text: str, max_chars: int) -> List[str]:
@@ -368,8 +393,8 @@ def _extract_outline_headings(text: str) -> List[str]:
     lines = [ln.strip() for ln in text.splitlines() if ln and ln.strip()]
     headings: List[str] = []
     patterns = [
-        r"^(chuong|chÆ°Æ¡ng)\s+\d+[\.: -].*",
-        r"^(muc|má»¥c)\s+\d+[\.: -].*",
+        r"^(chuong|chương)\s+\d+[\.: -].*",
+        r"^(muc|mục)\s+\d+[\.: -].*",
         r"^\d+(\.\d+){0,3}\s+.+",
         r"^[ivxlcdm]+\.\s+.+",
     ]
@@ -391,7 +416,7 @@ def _extract_outline_headings(text: str) -> List[str]:
 def _chunk_text_by_headings(text: str, max_chars: int) -> List[str]:
     lines = text.splitlines()
     heading_re = re.compile(
-        r"^((chuong|chÆ°Æ¡ng)\s+\d+[\.: -].*|(muc|má»¥c)\s+\d+[\.: -].*|\d+(\.\d+){0,3}\s+.+|[ivxlcdm]+\.\s+.+)$",
+        r"^((chuong|chương)\s+\d+[\.: -].*|(muc|mục)\s+\d+[\.: -].*|\d+(\.\d+){0,3}\s+.+|[ivxlcdm]+\.\s+.+)$",
         flags=re.IGNORECASE,
     )
     sections: List[List[str]] = []
@@ -625,7 +650,7 @@ def _summary_json_to_text(data: Dict) -> str:
     for ch in data.get("chapters", []):
         num = ch.get("chapter_number", "")
         title = ch.get("chapter_title") or ""
-        header = f"ChÆ°Æ¡ng {num}" if num and str(num) != "0" else ""
+        header = f"Chương {num}" if num and str(num) != "0" else ""
         if title:
             header = f"{header}: {title}" if header else title
         if header:
@@ -635,7 +660,7 @@ def _summary_json_to_text(data: Dict) -> str:
         for sec in ch.get("sections", []):
             sec_num = sec.get("section_number", "")
             sec_title = sec.get("section_title") or ""
-            sec_header = f"Má»¥c {sec_num}" if sec_num else ""
+            sec_header = f"Mục {sec_num}" if sec_num else ""
             if sec_title:
                 sec_header = f"{sec_header}: {sec_title}" if sec_header else sec_title
             if sec_header:
@@ -643,10 +668,10 @@ def _summary_json_to_text(data: Dict) -> str:
             if sec.get("section_summary"):
                 lines.append(sec["section_summary"])
     if data.get("key_points"):
-        lines.append("\n## CÃ¡c Ã½ chÃ­nh")
+        lines.append("\n## Các ý chính")
         lines.extend([f"- {p}" for p in data["key_points"]])
     if data.get("keywords"):
-        lines.append("\n## Tá»« khoÃ¡")
+        lines.append("\n## Từ khóa")
         lines.append(", ".join(data["keywords"]))
     return "\n\n".join(lines).strip()
 
@@ -724,7 +749,7 @@ def _coverage_audit(source_text: str, summary_text: str) -> Dict:
             "source_headings": [],
             "matched_headings": [],
             "missing_headings": [],
-            "coverage_ratio": 1.0,
+            "coverage_ratio": 0.0,
         }
     summary_norm = _normalize_heading_for_match(summary_text)
     matched: List[str] = []
@@ -987,7 +1012,7 @@ def _summarize_pdf_pages_via_text(
         _coverage_audit(source_text, summary_text)
         if source_text
         else {
-            "coverage_ratio": 1.0,
+            "coverage_ratio": 0.0,
             "source_headings": [],
             "matched_headings": [],
             "missing_headings": [],
@@ -1296,6 +1321,12 @@ def process_summary_job(job_id: str) -> None:
                 "error_message": str(exc)[:1000] if str(exc) else "KhÃ´ng rÃµ lá»—i.",
             },
         )
+
+
+
+
+
+
 
 
 
