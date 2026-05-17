@@ -148,6 +148,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_RETRY_MAX = int(os.getenv("GEMINI_RETRY_MAX", "3"))
 GEMINI_RETRY_BASE_SECONDS = float(os.getenv("GEMINI_RETRY_BASE_SECONDS", "8"))
+DOCLING_ENABLED = env_bool("DOCLING_ENABLED", True)
+DOCLING_DO_OCR = env_bool("DOCLING_DO_OCR", True)
+DOCLING_FORCE_FULL_PAGE_OCR = env_bool("DOCLING_FORCE_FULL_PAGE_OCR", False)
 
 # â”€â”€ Supabase Storage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 SUPABASE_STORAGE_BUCKET  = os.getenv("SUPABASE_STORAGE_BUCKET", "study-documents")

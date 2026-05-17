@@ -213,7 +213,63 @@ def _cleanup_text(raw_text: str) -> str:
     return text.strip()
 
 
+def _docling_parse_text(
+    file_name: str,
+    mime_type: str,
+    file_bytes: bytes,
+    *,
+    force_full_page_ocr: bool = False,
+) -> str:
+    if not bool(getattr(settings, "DOCLING_ENABLED", True)):
+        raise RuntimeError("Docling bi tat.")
+
+    try:
+        from docling.datamodel.base_models import InputFormat, DocumentStream
+        from docling.datamodel.pipeline_options import (
+            PdfPipelineOptions,
+            TableStructureOptions,
+            TesseractCliOcrOptions,
+        )
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+    except ImportError as exc:
+        raise RuntimeError("Docling chua duoc cai dat.") from exc
+
+    lower_name = (file_name or "").lower()
+    lower_mime = (mime_type or "").lower()
+    stream = DocumentStream(name=file_name or "document", stream=io.BytesIO(file_bytes))
+
+    if lower_name.endswith(".pdf") or "pdf" in lower_mime:
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.do_table_structure = True
+        pipeline_options.table_structure_options = TableStructureOptions(do_cell_matching=True)
+        pipeline_options.do_ocr = bool(getattr(settings, "DOCLING_DO_OCR", True))
+        if pipeline_options.do_ocr:
+            pipeline_options.ocr_options = TesseractCliOcrOptions(
+                force_full_page_ocr=force_full_page_ocr
+                or bool(getattr(settings, "DOCLING_FORCE_FULL_PAGE_OCR", False))
+            )
+        converter = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+            }
+        )
+    else:
+        converter = DocumentConverter()
+
+    result = converter.convert(stream)
+    document = result.document
+    markdown = str(document.export_to_markdown() or "").strip()
+    return _cleanup_text(markdown)
+
+
 def _extract_pdf_text(file_bytes: bytes) -> str:
+    try:
+        text = _docling_parse_text("document.pdf", "application/pdf", file_bytes, force_full_page_ocr=False)
+        if text:
+            return text
+    except Exception:
+        pass
+
     reader = PdfReader(io.BytesIO(file_bytes))
     chunks = [(page.extract_text() or "").strip() for page in reader.pages]
     return "\n\n".join([c for c in chunks if c])
@@ -234,6 +290,17 @@ def _is_pdf_text_extractable(pages: List[str], min_alpha_ratio: float = 0.25) ->
 
 
 def _extract_docx_text(file_bytes: bytes) -> str:
+    try:
+        text = _docling_parse_text(
+            "document.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            file_bytes,
+        )
+        if text:
+            return text
+    except Exception:
+        pass
+
     doc = Document(io.BytesIO(file_bytes))
     blocks: List[str] = []
     blocks.extend([p.text.strip() for p in doc.paragraphs if p.text and p.text.strip()])
@@ -253,6 +320,21 @@ def _extract_text(file_name: str, mime_type: str, file_bytes: bytes) -> str:
     if lower_name.endswith(".docx") or "wordprocessingml" in lower_mime:
         return _extract_docx_text(file_bytes)
     raise RuntimeError("Chá»‰ há»— trá»£ PDF vÃ  DOCX.")
+
+
+def _extract_pdf_text_with_ocr(file_bytes: bytes) -> str:
+    try:
+        text = _docling_parse_text(
+            "document.pdf",
+            "application/pdf",
+            file_bytes,
+            force_full_page_ocr=True,
+        )
+        if text:
+            return text
+    except Exception:
+        pass
+    return _extract_pdf_text(file_bytes)
 
 
 def _chunk_text(text: str, max_chars: int) -> List[str]:
@@ -1081,20 +1163,44 @@ def process_summary_job(job_id: str) -> None:
 
         if is_pdf:
             supabase_client.update_summary_job(job_id, {"progress": 15})
-            summarized = _summarize_pdf_pages_via_text(
-                client=client,
-                file_bytes=bytes(blob),
-                job_id=job_id,
-                max_pages_per_chunk=int(
-                    getattr(settings, "SUMMARY_PDF_PAGES_PER_CHUNK", "12")
-                ),
-            )
-            summary_data = summarized["summary_data"]
-            final_summary_text = summarized["summary_text"]
-            coverage = summarized["coverage"]
-            text = summarized.get("source_text") or text
+            text = _cleanup_text(_extract_pdf_text(bytes(blob)))
+
+            use_ocr = False
+            try:
+                _validate_source_text(text)
+            except RuntimeError:
+                use_ocr = True
+
+            if use_ocr:
+                text = _cleanup_text(_extract_pdf_text_with_ocr(bytes(blob)))
+
             if text and len(text) > max_source_chars:
                 text = text[:max_source_chars]
+
+            try:
+                _validate_source_text(text)
+                summarized = _summarize_with_chunks_retry(
+                    client=client,
+                    text=text,
+                    job_id=job_id,
+                )
+                summary_data = summarized["summary_data"]
+                final_summary_text = summarized["summary_text"]
+                coverage = summarized["coverage"]
+            except RuntimeError:
+                # Fallback cuoi cung: Gemini doc PDF native theo batch trang
+                summarized = _summarize_pdf_pages_via_text(
+                    client=client,
+                    file_bytes=bytes(blob),
+                    job_id=job_id,
+                    max_pages_per_chunk=int(
+                        getattr(settings, "SUMMARY_PDF_PAGES_PER_CHUNK", "12")
+                    ),
+                )
+                summary_data = summarized["summary_data"]
+                final_summary_text = summarized["summary_text"]
+                coverage = summarized["coverage"]
+                text = summarized.get("source_text") or text
 
         else:
             # DOCX
