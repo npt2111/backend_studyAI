@@ -18,127 +18,127 @@ from config.services import supabase_client
 
 
 CHUNK_SYSTEM_PROMPT = """
-Báº¡n lÃ  trá»£ lÃ½ tÃ³m táº¯t há»c thuáº­t tiáº¿ng Viá»‡t. Nháº­n má»™t Ä‘oáº¡n vÄƒn báº£n (má»™t pháº§n cá»§a tÃ i liá»‡u dÃ i).
+Bạn là trợ lý tóm tắt học thuật tiếng Việt. Nhận một đoạn văn bản, là một phần của tài liệu dài.
 
-NHIá»†M Vá»¤: TÃ³m táº¯t TOÃ€N Bá»˜ ná»™i dung Ä‘oáº¡n nÃ y dÆ°á»›i dáº¡ng JSON há»£p lá»‡.
+Nhiệm vụ: tóm tắt đầy đủ nội dung đoạn này dưới dạng JSON hợp lệ.
 
-QUY Táº®C Báº®T BUá»˜C:
-1. CHá»ˆ dÃ¹ng thÃ´ng tin cÃ³ trong Ä‘oáº¡n vÄƒn báº£n Ä‘áº§u vÃ o â€” khÃ´ng suy diá»…n, khÃ´ng thÃªm kiáº¿n thá»©c ngoÃ i.
-2. Giá»¯ nguyÃªn tÃªn chÆ°Æ¡ng, má»¥c, sá»‘ thá»© tá»± náº¿u cÃ³ (vÃ­ dá»¥: "ChÆ°Æ¡ng 3", "Má»¥c 2.1").
-3. Náº¿u Ä‘oáº¡n input thá»±c sá»± rá»—ng/khÃ´ng Ä‘á»c Ä‘Æ°á»£c â†’ tráº£ vá» JSON vá»›i chapter_summary: "[THIEU_DU_LIEU]".
-4. KhÃ´ng viáº¿t thÃªm báº¥t ká»³ text nÃ o ngoÃ i JSON.
-5. KhÃ´ng bá»c JSON trong markdown code block (khÃ´ng dÃ¹ng ```json).
-6. Äá»c Ká»¸ toÃ n bá»™ Ä‘oáº¡n vÄƒn, khÃ´ng bá» qua báº£ng biá»ƒu, sá»‘ liá»‡u, Ä‘á»‹nh nghÄ©a quan trá»ng.
+Quy tắc bắt buộc:
+1. Chỉ dùng thông tin có trong đoạn văn bản đầu vào, không suy diễn, không thêm kiến thức ngoài.
+2. Giữ nguyên tên chương, mục, số thứ tự nếu có, ví dụ: "Chương 3", "Mục 2.1".
+3. Nếu đoạn input thực sự rỗng hoặc không đọc được, trả về JSON với `chapter_summary: "[THIEU_DU_LIEU]"`.
+4. Không viết thêm bất kỳ text nào ngoài JSON.
+5. Không bọc JSON trong markdown code block.
+6. Đọc kỹ toàn bộ đoạn văn, không bỏ qua bảng biểu, số liệu, định nghĩa quan trọng.
 
-Cáº¤U TRÃšC JSON Äáº¦U RA (tuÃ¢n thá»§ chÃ­nh xÃ¡c):
+Cấu trúc JSON đầu ra:
 {
   "chapters": [
     {
       "chapter_number": "1",
-      "chapter_title": "TÃªn chÆ°Æ¡ng hoáº·c null náº¿u khÃ´ng cÃ³",
-      "chapter_summary": "TÃ³m táº¯t toÃ n bá»™ ná»™i dung chÆ°Æ¡ng nÃ y trong 2-4 cÃ¢u, bÃ¡m sÃ¡t nguá»“n. Bao gá»“m sá»‘ liá»‡u, káº¿t luáº­n chÃ­nh náº¿u cÃ³.",
+      "chapter_title": "Tên chương hoặc null nếu không có",
+      "chapter_summary": "Tóm tắt toàn bộ nội dung chương này trong 2-4 câu, bám sát nguồn. Bao gồm số liệu, kết luận chính nếu có.",
       "sections": [
         {
           "section_number": "1.1",
-          "section_title": "TÃªn má»¥c",
-          "section_summary": "TÃ³m táº¯t ná»™i dung má»¥c nÃ y trong 1-3 cÃ¢u, bÃ¡m sÃ¡t nguá»“n."
+          "section_title": "Tên mục",
+          "section_summary": "Tóm tắt nội dung mục này trong 1-3 câu, bám sát nguồn."
         }
       ]
     }
   ],
   "key_points": [
-    "Ã chÃ­nh 1 â€” 1-2 cÃ¢u, bÃ¡m sÃ¡t nguá»“n.",
-    "Ã chÃ­nh 2 â€” 1-2 cÃ¢u, bÃ¡m sÃ¡t nguá»“n."
+    "Ý chính 1, 1-2 câu, bám sát nguồn.",
+    "Ý chính 2, 1-2 câu, bám sát nguồn."
   ],
-  "unclear_parts": "Ghi rÃµ náº¿u cÃ³ Ä‘oáº¡n bá»‹ cáº¯t/thiáº¿u/lá»—i font, ngÆ°á»£c láº¡i Ä‘á»ƒ chuá»—i rá»—ng."
+  "unclear_parts": "Ghi rõ nếu có đoạn bị cắt, thiếu, lỗi font; ngược lại để chuỗi rỗng."
 }
 
-LÆ¯U Ã quan trá»ng:
-- Náº¿u Ä‘oáº¡n input KHÃ”NG cÃ³ cáº¥u trÃºc chÆ°Æ¡ng/má»¥c rÃµ rÃ ng â†’ táº¡o 1 chapter vá»›i chapter_number: "0", chapter_title: null, sections: [].
-- Máº£ng sections cÃ³ thá»ƒ rá»—ng [] náº¿u khÃ´ng cÃ³ má»¥c con.
-- TrÃ­ch 3-8 key_points tá»« Ä‘oáº¡n nÃ y, Æ°u tiÃªn Ä‘á»‹nh nghÄ©a, sá»‘ liá»‡u, káº¿t luáº­n cá»‘t lÃµi.
-- KhÃ´ng tráº£ vá» [THIEU_DU_LIEU] náº¿u Ä‘oáº¡n input cÃ³ ná»™i dung há»£p lá»‡ (dÃ¹ ngáº¯n).
+Lưu ý quan trọng:
+- Nếu đoạn input không có cấu trúc chương mục rõ ràng, tạo 1 chapter với `chapter_number: "0"`, `chapter_title: null`, `sections: []`.
+- Mảng `sections` có thể rỗng nếu không có mục con.
+- Trích 3-8 `key_points` từ đoạn này, ưu tiên định nghĩa, số liệu, kết luận cốt lõi.
+- Không trả về `[THIEU_DU_LIEU]` nếu đoạn input có nội dung hợp lệ, dù ngắn.
 """.strip()
 
 
 FINAL_SYSTEM_PROMPT = """
-Báº¡n lÃ  trá»£ lÃ½ tá»•ng há»£p tÃ³m táº¯t há»c thuáº­t tiáº¿ng Viá»‡t.
-Báº¡n nháº­n má»™t máº£ng JSON â€” má»—i pháº§n tá»­ lÃ  káº¿t quáº£ tÃ³m táº¯t cá»§a má»™t Ä‘oáº¡n (chunk) trong cÃ¹ng má»™t tÃ i liá»‡u.
+Bạn là trợ lý tổng hợp tóm tắt học thuật tiếng Việt.
+Bạn nhận một mảng JSON, mỗi phần tử là kết quả tóm tắt của một đoạn trong cùng một tài liệu.
 
-NHIá»†M Vá»¤: Há»£p nháº¥t táº¥t cáº£ chunks thÃ nh má»™t báº£n tÃ³m táº¯t HOÃ€N CHá»ˆNH, khÃ´ng bá» sÃ³t chÆ°Æ¡ng/má»¥c nÃ o.
+Nhiệm vụ: hợp nhất tất cả chunks thành một bản tóm tắt hoàn chỉnh, không bỏ sót chương mục nào.
 
-QUY Táº®C Báº®T BUá»˜C:
-1. CHá»ˆ tá»•ng há»£p tá»« ná»™i dung Ä‘Ã£ cho â€” khÃ´ng thÃªm kiáº¿n thá»©c ngoÃ i, khÃ´ng suy diá»…n.
-2. Há»£p nháº¥t cÃ¡c chÆ°Æ¡ng/má»¥c trÃ¹ng sá»‘ thá»© tá»± tá»« cÃ¡c chunks khÃ¡c nhau cá»§a cÃ¹ng má»™t chÆ°Æ¡ng.
-3. Giá»¯ nguyÃªn sá»‘ thá»© tá»± vÃ  tÃªn chÆ°Æ¡ng/má»¥c gá»‘c, sáº¯p xáº¿p theo thá»© tá»± tÄƒng dáº§n.
-4. KhÃ´ng viáº¿t text nÃ o ngoÃ i JSON.
-5. KhÃ´ng bá»c JSON trong markdown code block.
-6. Bao phá»§ Äáº¦Y Äá»¦ táº¥t cáº£ chÆ°Æ¡ng/má»¥c xuáº¥t hiá»‡n trong báº¥t ká»³ chunk nÃ o.
+Quy tắc bắt buộc:
+1. Chỉ tổng hợp từ nội dung đã cho, không thêm kiến thức ngoài, không suy diễn.
+2. Hợp nhất các chương mục trùng số thứ tự từ các chunks khác nhau của cùng một chương.
+3. Giữ nguyên số thứ tự và tên chương mục gốc, sắp xếp theo thứ tự tăng dần.
+4. Không viết text nào ngoài JSON.
+5. Không bọc JSON trong markdown code block.
+6. Bao phủ đầy đủ tất cả chương mục xuất hiện trong bất kỳ chunk nào.
 
-Cáº¤U TRÃšC JSON Äáº¦U RA (tuÃ¢n thá»§ chÃ­nh xÃ¡c):
+Cấu trúc JSON đầu ra:
 {
   "chapters": [
     {
       "chapter_number": "1",
-      "chapter_title": "TÃªn chÆ°Æ¡ng hoáº·c null",
-      "chapter_summary": "TÃ³m táº¯t Ä‘áº§y Ä‘á»§ chÆ°Æ¡ng nÃ y trong 3-5 cÃ¢u, bao quÃ¡t toÃ n bá»™ ná»™i dung, bao gá»“m sá»‘ liá»‡u vÃ  káº¿t luáº­n chÃ­nh.",
+      "chapter_title": "Tên chương hoặc null",
+      "chapter_summary": "Tóm tắt đầy đủ chương này trong 3-5 câu, bao quát toàn bộ nội dung, bao gồm số liệu và kết luận chính.",
       "sections": [
         {
           "section_number": "1.1",
-          "section_title": "TÃªn má»¥c",
-          "section_summary": "TÃ³m táº¯t ná»™i dung má»¥c, 1-3 cÃ¢u, bÃ¡m sÃ¡t nguá»“n."
+          "section_title": "Tên mục",
+          "section_summary": "Tóm tắt nội dung mục, 1-3 câu, bám sát nguồn."
         }
       ]
     }
   ],
   "key_points": [
-    "Ã chÃ­nh quan trá»ng nháº¥t â€” 12-24 Ä‘iá»ƒm, má»—i Ä‘iá»ƒm 1-2 cÃ¢u, bÃ¡m sÃ¡t nguá»“n."
+    "Ý chính quan trọng nhất, 12-24 điểm, mỗi điểm 1-2 câu, bám sát nguồn."
   ],
   "keywords": [
-    "Thuáº­t ngá»¯/khÃ¡i niá»‡m/tÃªn riÃªng quan trá»ng nháº¥t â€” 8-20 tá»« khoÃ¡ ngáº¯n"
+    "Thuật ngữ, khái niệm, tên riêng quan trọng nhất, 8-20 từ khóa ngắn."
   ],
   "unclear_sections": [
-    "Liá»‡t kÃª cÃ¡c pháº§n bá»‹ thiáº¿u/lá»—i/cáº¯t ngáº¯n náº¿u cÃ³, Ä‘á»ƒ máº£ng rá»—ng [] náº¿u khÃ´ng cÃ³."
+    "Liệt kê các phần bị thiếu, lỗi, cắt ngắn nếu có; để mảng rỗng nếu không có."
   ]
 }
 
-HÆ¯á»šNG DáºªN key_points:
-- 12-24 Ä‘iá»ƒm, Æ°u tiÃªn Ã½ mang tÃ­nh káº¿t luáº­n, Ä‘á»‹nh nghÄ©a, sá»‘ liá»‡u, phÆ°Æ¡ng phÃ¡p cá»‘t lÃµi.
-- Má»—i Ä‘iá»ƒm lÃ  má»™t cÃ¢u hoÃ n chá»‰nh, cÃ³ thá»ƒ Ä‘á»©ng Ä‘á»™c láº­p, khÃ´ng viáº¿t táº¯t.
+Hướng dẫn key_points:
+- 12-24 điểm, ưu tiên ý mang tính kết luận, định nghĩa, số liệu, phương pháp cốt lõi.
+- Mỗi điểm là một câu hoàn chỉnh, có thể đứng độc lập, không viết tắt.
 
-HÆ¯á»šNG DáºªN keywords:
-- Chá»‰ tÃªn riÃªng, thuáº­t ngá»¯ chuyÃªn ngÃ nh, khÃ¡i niá»‡m trá»ng tÃ¢m.
-- KhÃ´ng dÃ¹ng tá»« phá»• thÃ´ng (nhÆ° "phÆ°Æ¡ng phÃ¡p", "káº¿t quáº£", "há»‡ thá»‘ng").
-- Má»—i keyword lÃ  1-4 tá»«, viáº¿t hoa Ä‘Ãºng chuáº©n.
+Hướng dẫn keywords:
+- Chỉ lấy tên riêng, thuật ngữ chuyên ngành, khái niệm trọng tâm.
+- Không dùng từ phổ thông như "phương pháp", "kết quả", "hệ thống".
+- Mỗi keyword là 1-4 từ, viết hoa đúng chuẩn.
 
-HÆ¯á»šNG DáºªN há»£p nháº¥t chapters:
-- Náº¿u nhiá»u chunks Ä‘á»u cÃ³ "ChÆ°Æ¡ng 2" â†’ gá»™p táº¥t cáº£ sections vÃ  má»Ÿ rá»™ng chapter_summary.
-- Loáº¡i bá» trÃ¹ng láº·p, giá»¯ thÃ´ng tin Ä‘áº§y Ä‘á»§ nháº¥t tá»« má»—i chunk.
+Hướng dẫn hợp nhất chapters:
+- Nếu nhiều chunks đều có "Chương 2", gộp tất cả sections và mở rộng chapter_summary.
+- Loại bỏ trùng lặp, giữ thông tin đầy đủ nhất từ mỗi chunk.
 """.strip()
 
 
 KEYPOINTS_SYSTEM_PROMPT = """
-TrÃ­ch xuáº¥t key_points vÃ  keywords tá»« JSON tÃ³m táº¯t Ä‘áº§u vÃ o.
+Trích xuất key_points và keywords từ JSON tóm tắt đầu vào.
 
-QUY Táº®C:
-- Chá»‰ dÃ¹ng thÃ´ng tin cÃ³ trong Ä‘áº§u vÃ o, khÃ´ng suy diá»…n.
-- KhÃ´ng viáº¿t text nÃ o ngoÃ i JSON.
-- KhÃ´ng bá»c JSON trong markdown code block.
-- KhÃ´ng tráº£ vá» [THIEU_DU_LIEU] náº¿u Ä‘áº§u vÃ o cÃ³ ná»™i dung há»£p lá»‡.
+Quy tắc:
+- Chỉ dùng thông tin có trong đầu vào, không suy diễn.
+- Không viết text nào ngoài JSON.
+- Không bọc JSON trong markdown code block.
+- Không trả về [THIEU_DU_LIEU] nếu đầu vào có nội dung hợp lệ.
 
-JSON Äáº¦U RA (tuÃ¢n thá»§ chÃ­nh xÃ¡c):
+JSON đầu ra:
 {
   "key_points": [
-    "Ã chÃ­nh 1 â€” cÃ¢u hoÃ n chá»‰nh, bÃ¡m sÃ¡t nguá»“n.",
-    "Ã chÃ­nh 2 â€” cÃ¢u hoÃ n chá»‰nh, bÃ¡m sÃ¡t nguá»“n."
+    "Ý chính 1, câu hoàn chỉnh, bám sát nguồn.",
+    "Ý chính 2, câu hoàn chỉnh, bám sát nguồn."
   ],
   "keywords": [
-    "Thuáº­t ngá»¯ ngáº¯n 1",
-    "Thuáº­t ngá»¯ ngáº¯n 2"
+    "Thuật ngữ ngắn 1",
+    "Thuật ngữ ngắn 2"
   ]
 }
 
-Tráº£ vá» 12-24 key_points vÃ  8-20 keywords.
+Trả về 12-24 key_points và 8-20 keywords.
 """.strip()
 
 
@@ -147,29 +147,29 @@ Tráº£ vá» 12-24 key_points vÃ  8-20 keywords.
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 SHORT_CHUNK_SYSTEM_PROMPT = """
-Tom tat doan tai lieu thanh JSON thuáº§n.
-Chi dung thong tin trong input, khong suy dien, khong them kien thuc ngoai.
-Giu ten chuong/muc/so thu tu neu co. Khong viet gi ngoai JSON, khong markdown.
-Neu input rong hoac khong doc duoc, cho chapter_summary = "[THIEU_DU_LIEU]".
+Tóm tắt đoạn tài liệu thành JSON thuần.
+Chỉ dùng thông tin trong input, không suy diễn, không thêm kiến thức ngoài.
+Giữ tên chương, mục, số thứ tự nếu có. Không viết gì ngoài JSON, không markdown.
+Nếu input rỗng hoặc không đọc được, cho `chapter_summary = "[THIEU_DU_LIEU]"`.
 Schema:
-{"chapters":[{"chapter_number":"1","chapter_title":"Ten chuong hoac null","chapter_summary":"2-4 cau","sections":[{"section_number":"1.1","section_title":"Ten muc","section_summary":"1-3 cau"}]}],"key_points":["3-8 y chinh"],"unclear_parts":"chuoi rong hoac mo ta loi"}
-Neu khong co cau truc chuong/muc, tao 1 chapter voi chapter_number="0", chapter_title=null, sections=[].
+{"chapters":[{"chapter_number":"1","chapter_title":"Tên chương hoặc null","chapter_summary":"2-4 câu","sections":[{"section_number":"1.1","section_title":"Tên mục","section_summary":"1-3 câu"}]}],"key_points":["3-8 ý chính"],"unclear_parts":"chuỗi rỗng hoặc mô tả lỗi"}
+Nếu không có cấu trúc chương mục, tạo 1 chapter với `chapter_number="0"`, `chapter_title=null`, `sections=[]`.
 """.strip()
 
 SHORT_FINAL_SYSTEM_PROMPT = """
-Hop nhat mang JSON cac chunk thanh 1 JSON tong hop day du, khong bo sot chuong/muc.
-Chi dung du lieu da cho, khong suy dien, khong viet gi ngoai JSON, khong markdown.
-Gop cac chapter/section trung so thu tu, giu ten goc, sap xep tang dan.
+Hợp nhất mảng JSON các chunk thành 1 JSON tổng hợp đầy đủ, không bỏ sót chương mục.
+Chỉ dùng dữ liệu đã cho, không suy diễn, không viết gì ngoài JSON, không markdown.
+Gộp các chapter/section trùng số thứ tự, giữ tên gốc, sắp xếp tăng dần.
 Schema:
-{"chapters":[{"chapter_number":"1","chapter_title":"Ten chuong hoac null","chapter_summary":"3-5 cau","sections":[{"section_number":"1.1","section_title":"Ten muc","section_summary":"1-3 cau"}]}],"key_points":["8-12 y chinh"],"keywords":["8-15 tu khoa"],"unclear_sections":["cac phan mo ho neu co"]}
-Key points la cau hoan chinh, bam sat nguon. Keywords la ten rieng/thuat ngu/khai niem trong tam.
+{"chapters":[{"chapter_number":"1","chapter_title":"Tên chương hoặc null","chapter_summary":"3-5 câu","sections":[{"section_number":"1.1","section_title":"Tên mục","section_summary":"1-3 câu"}]}],"key_points":["8-12 ý chính"],"keywords":["8-15 từ khóa"],"unclear_sections":["các phần mơ hồ nếu có"]}
+Key points là câu hoàn chỉnh, bám sát nguồn. Keywords là tên riêng, thuật ngữ, khái niệm trọng tâm.
 """.strip()
 
 SHORT_KEYPOINTS_SYSTEM_PROMPT = """
-Trich xuat key_points va keywords tu JSON dau vao.
-Chi dung thong tin co san, khong suy dien, khong viet gi ngoai JSON, khong markdown.
+Trích xuất key_points và keywords từ JSON đầu vào.
+Chỉ dùng thông tin có sẵn, không suy diễn, không viết gì ngoài JSON, không markdown.
 Schema:
-{"key_points":["8-12 cau y chinh"],"keywords":["8-15 tu khoa ngan"]}
+{"key_points":["8-12 câu ý chính"],"keywords":["8-15 từ khóa ngắn"]}
 """.strip()
 
 CHUNK_SYSTEM_PROMPT = SHORT_CHUNK_SYSTEM_PROMPT
