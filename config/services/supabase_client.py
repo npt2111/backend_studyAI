@@ -212,6 +212,17 @@ def list_summary_jobs(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[str, 
     return [], status_code
 
 
+def list_queued_summary_jobs(*, limit: int = 10) -> Tuple[List[Dict[str, Any]], int]:
+    safe_limit = max(1, min(limit, 100))
+    payload, status_code = _request(
+        "GET",
+        f"/rest/v1/ai_summary_jobs?select=*&status=eq.queued&order=created_at.asc&limit={safe_limit}",
+    )
+    if isinstance(payload, list):
+        return payload, 200
+    return [], status_code
+
+
 def update_summary_job(job_id: str, fields: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
     encoded = quote(job_id, safe="")
     payload = dict(fields)

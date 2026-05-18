@@ -21,158 +21,158 @@ logger = logging.getLogger(__name__)
 
 
 CHUNK_SYSTEM_PROMPT = """
-Bạn là trợ lý tóm tắt học thuật tiếng Việt. Nhận một đoạn văn bản, là một phần của tài liệu dài.
+Ban la tro ly tom tat hoc thuat tieng Viet. Nhan mot doan van ban, la mot phan cua tai lieu dai.
 
-Nhiệm vụ: tóm tắt đầy đủ nội dung đoạn này dưới dạng JSON hợp lệ.
+Nhiem vu: tom tat day du noi dung doan nay duoi dang JSON hop le.
 
-Quy tắc bắt buộc:
-1. Chỉ dùng thông tin có trong đoạn văn bản đầu vào, không suy diễn, không thêm kiến thức ngoài.
-2. Giữ nguyên tên chương, mục, số thứ tự nếu có, ví dụ: "Chương 3", "Mục 2.1".
-3. Nếu đoạn input thực sự rỗng hoặc không đọc được, trả về JSON với `chapter_summary: "[THIEU_DU_LIEU]"`.
-4. Không viết thêm bất kỳ text nào ngoài JSON.
-5. Không bọc JSON trong markdown code block.
-6. Đọc kỹ toàn bộ đoạn văn, không bỏ qua bảng biểu, số liệu, định nghĩa quan trọng.
+Quy tac bat buoc:
+1. Chi dung thong tin co trong doan van ban dau vao, khong suy dien, khong them kien thuc ngoai.
+2. Giu nguyen ten chuong, muc, so thu tu neu co, vi du: "Chuong 3", "Muc 2.1".
+3. Neu doan input thuc su rong hoac khong doc duoc, tra ve JSON voi `chapter_summary: "[THIEU_DU_LIEU]"`.
+4. Khong viet them bat ky text nao ngoai JSON.
+5. Khong boc JSON trong markdown code block.
+6. Doc ky toan bo doan van, khong bo qua bang bieu, so lieu, dinh nghia quan trong.
 
-Cấu trúc JSON đầu ra:
+Cau truc JSON dau ra:
 {
   "chapters": [
     {
       "chapter_number": "1",
-      "chapter_title": "Tên chương hoặc null nếu không có",
-      "chapter_summary": "Tóm tắt toàn bộ nội dung chương này trong 2-4 câu, bám sát nguồn. Bao gồm số liệu, kết luận chính nếu có.",
+      "chapter_title": "Ten chuong hoac null neu khong co",
+      "chapter_summary": "Tom tat toan bo noi dung chuong nay trong 2-4 cau, bam sat nguon. Bao gom so lieu, ket luan chinh neu co.",
       "sections": [
         {
           "section_number": "1.1",
-          "section_title": "Tên mục",
-          "section_summary": "Tóm tắt nội dung mục này trong 1-3 câu, bám sát nguồn."
+          "section_title": "Ten muc",
+          "section_summary": "Tom tat noi dung muc nay trong 1-3 cau, bam sat nguon."
         }
       ]
     }
   ],
   "key_points": [
-    "Ý chính 1, 1-2 câu, bám sát nguồn.",
-    "Ý chính 2, 1-2 câu, bám sát nguồn."
+    "Y chinh 1, 1-2 cau, bam sat nguon.",
+    "Y chinh 2, 1-2 cau, bam sat nguon."
   ],
-  "unclear_parts": "Ghi rõ nếu có đoạn bị cắt, thiếu, lỗi font; ngược lại để chuỗi rỗng."
+  "unclear_parts": "Ghi ro neu co doan bi cat, thieu, loi font; nguoc lai de chuoi rong."
 }
 
-Lưu ý quan trọng:
-- Nếu đoạn input không có cấu trúc chương mục rõ ràng, tạo 1 chapter với `chapter_number: "0"`, `chapter_title: null`, `sections: []`.
-- Mảng `sections` có thể rỗng nếu không có mục con.
-- Trích 3-8 `key_points` từ đoạn này, ưu tiên định nghĩa, số liệu, kết luận cốt lõi.
-- Không trả về `[THIEU_DU_LIEU]` nếu đoạn input có nội dung hợp lệ, dù ngắn.
+Luu y quan trong:
+- Neu doan input khong co cau truc chuong muc ro rang, tao 1 chapter voi `chapter_number: "0"`, `chapter_title: null`, `sections: []`.
+- Mang `sections` co the rong neu khong co muc con.
+- Trich 3-8 `key_points` tu doan nay, uu tien dinh nghia, so lieu, ket luan cot loi.
+- Khong tra ve `[THIEU_DU_LIEU]` neu doan input co noi dung hop le, du ngan.
 """.strip()
 
 
 FINAL_SYSTEM_PROMPT = """
-Bạn là trợ lý tổng hợp tóm tắt học thuật tiếng Việt.
-Bạn nhận một mảng JSON, mỗi phần tử là kết quả tóm tắt của một đoạn trong cùng một tài liệu.
+Ban la tro ly tong hop tom tat hoc thuat tieng Viet.
+Ban nhan mot mang JSON, moi phan tu la ket qua tom tat cua mot doan trong cung mot tai lieu.
 
-Nhiệm vụ: hợp nhất tất cả chunks thành một bản tóm tắt hoàn chỉnh, không bỏ sót chương mục nào.
+Nhiem vu: hop nhat tat ca chunks thanh mot ban tom tat hoan chinh, khong bo sot chuong muc nao.
 
-Quy tắc bắt buộc:
-1. Chỉ tổng hợp từ nội dung đã cho, không thêm kiến thức ngoài, không suy diễn.
-2. Hợp nhất các chương mục trùng số thứ tự từ các chunks khác nhau của cùng một chương.
-3. Giữ nguyên số thứ tự và tên chương mục gốc, sắp xếp theo thứ tự tăng dần.
-4. Không viết text nào ngoài JSON.
-5. Không bọc JSON trong markdown code block.
-6. Bao phủ đầy đủ tất cả chương mục xuất hiện trong bất kỳ chunk nào.
+Quy tac bat buoc:
+1. Chi tong hop tu noi dung da cho, khong them kien thuc ngoai, khong suy dien.
+2. Hop nhat cac chuong muc trung so thu tu tu cac chunks khac nhau cua cung mot chuong.
+3. Giu nguyen so thu tu va ten chuong muc goc, sap xep theo thu tu tang dan.
+4. Khong viet text nao ngoai JSON.
+5. Khong boc JSON trong markdown code block.
+6. Bao phu day du tat ca chuong muc xuat hien trong bat ky chunk nao.
 
-Cấu trúc JSON đầu ra:
+Cau truc JSON dau ra:
 {
   "chapters": [
     {
       "chapter_number": "1",
-      "chapter_title": "Tên chương hoặc null",
-      "chapter_summary": "Tóm tắt đầy đủ chương này trong 3-5 câu, bao quát toàn bộ nội dung, bao gồm số liệu và kết luận chính.",
+      "chapter_title": "Ten chuong hoac null",
+      "chapter_summary": "Tom tat day du chuong nay trong 3-5 cau, bao quat toan bo noi dung, bao gom so lieu va ket luan chinh.",
       "sections": [
         {
           "section_number": "1.1",
-          "section_title": "Tên mục",
-          "section_summary": "Tóm tắt nội dung mục, 1-3 câu, bám sát nguồn."
+          "section_title": "Ten muc",
+          "section_summary": "Tom tat noi dung muc, 1-3 cau, bam sat nguon."
         }
       ]
     }
   ],
   "key_points": [
-    "Ý chính quan trọng nhất, 12-24 điểm, mỗi điểm 1-2 câu, bám sát nguồn."
+    "Y chinh quan trong nhat, 12-24 diem, moi diem 1-2 cau, bam sat nguon."
   ],
   "keywords": [
-    "Thuật ngữ, khái niệm, tên riêng quan trọng nhất, 8-20 từ khóa ngắn."
+    "Thuat ngu, khai niem, ten rieng quan trong nhat, 8-20 tu khoa ngan."
   ],
   "unclear_sections": [
-    "Liệt kê các phần bị thiếu, lỗi, cắt ngắn nếu có; để mảng rỗng nếu không có."
+    "Liet ke cac phan bi thieu, loi, cat ngan neu co; de mang rong neu khong co."
   ]
 }
 
-Hướng dẫn key_points:
-- 12-24 điểm, ưu tiên ý mang tính kết luận, định nghĩa, số liệu, phương pháp cốt lõi.
-- Mỗi điểm là một câu hoàn chỉnh, có thể đứng độc lập, không viết tắt.
+Huong dan key_points:
+- 12-24 diem, uu tien y mang tinh ket luan, dinh nghia, so lieu, phuong phap cot loi.
+- Moi diem la mot cau hoan chinh, co the dung doc lap, khong viet tat.
 
-Hướng dẫn keywords:
-- Chỉ lấy tên riêng, thuật ngữ chuyên ngành, khái niệm trọng tâm.
-- Không dùng từ phổ thông như "phương pháp", "kết quả", "hệ thống".
-- Mỗi keyword là 1-4 từ, viết hoa đúng chuẩn.
+Huong dan keywords:
+- Chi lay ten rieng, thuat ngu chuyen nganh, khai niem trong tam.
+- Khong dung tu pho thong nhu "phuong phap", "ket qua", "he thong".
+- Moi keyword la 1-4 tu, viet hoa dung chuan.
 
-Hướng dẫn hợp nhất chapters:
-- Nếu nhiều chunks đều có "Chương 2", gộp tất cả sections và mở rộng chapter_summary.
-- Loại bỏ trùng lặp, giữ thông tin đầy đủ nhất từ mỗi chunk.
+Huong dan hop nhat chapters:
+- Neu nhieu chunks deu co "Chuong 2", gop tat ca sections va mo rong chapter_summary.
+- Loai bo trung lap, giu thong tin day du nhat tu moi chunk.
 """.strip()
 
 
 KEYPOINTS_SYSTEM_PROMPT = """
-Trích xuất key_points và keywords từ JSON tóm tắt đầu vào.
+Trich xuat key_points va keywords tu JSON tom tat dau vao.
 
-Quy tắc:
-- Chỉ dùng thông tin có trong đầu vào, không suy diễn.
-- Không viết text nào ngoài JSON.
-- Không bọc JSON trong markdown code block.
-- Không trả về [THIEU_DU_LIEU] nếu đầu vào có nội dung hợp lệ.
+Quy tac:
+- Chi dung thong tin co trong dau vao, khong suy dien.
+- Khong viet text nao ngoai JSON.
+- Khong boc JSON trong markdown code block.
+- Khong tra ve [THIEU_DU_LIEU] neu dau vao co noi dung hop le.
 
-JSON đầu ra:
+JSON dau ra:
 {
   "key_points": [
-    "Ý chính 1, câu hoàn chỉnh, bám sát nguồn.",
-    "Ý chính 2, câu hoàn chỉnh, bám sát nguồn."
+    "Y chinh 1, cau hoan chinh, bam sat nguon.",
+    "Y chinh 2, cau hoan chinh, bam sat nguon."
   ],
   "keywords": [
-    "Thuật ngữ ngắn 1",
-    "Thuật ngữ ngắn 2"
+    "Thuat ngu ngan 1",
+    "Thuat ngu ngan 2"
   ]
 }
 
-Trả về 12-24 key_points và 8-20 keywords.
+Tra ve 12-24 key_points va 8-20 keywords.
 """.strip()
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
 # Helpers
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
 
 SHORT_CHUNK_SYSTEM_PROMPT = """
-Tóm tắt đoạn tài liệu thành JSON thuần.
-Chỉ dùng thông tin trong input, không suy diễn, không thêm kiến thức ngoài.
-Giữ tên chương, mục, số thứ tự nếu có. Không viết gì ngoài JSON, không markdown.
-Nếu input rỗng hoặc không đọc được, cho `chapter_summary = "[THIEU_DU_LIEU]"`.
+Tom tat doan tai lieu thanh JSON thuan.
+Chi dung thong tin trong input, khong suy dien, khong them kien thuc ngoai.
+Giu ten chuong, muc, so thu tu neu co. Khong viet gi ngoai JSON, khong markdown.
+Neu input rong hoac khong doc duoc, cho `chapter_summary = "[THIEU_DU_LIEU]"`.
 Schema:
-{"chapters":[{"chapter_number":"1","chapter_title":"Tên chương hoặc null","chapter_summary":"2-4 câu","sections":[{"section_number":"1.1","section_title":"Tên mục","section_summary":"1-3 câu"}]}],"key_points":["3-8 ý chính"],"unclear_parts":"chuỗi rỗng hoặc mô tả lỗi"}
-Nếu không có cấu trúc chương mục, tạo 1 chapter với `chapter_number="0"`, `chapter_title=null`, `sections=[]`.
+{"chapters":[{"chapter_number":"1","chapter_title":"Ten chuong hoac null","chapter_summary":"2-4 cau","sections":[{"section_number":"1.1","section_title":"Ten muc","section_summary":"1-3 cau"}]}],"key_points":["3-8 y chinh"],"unclear_parts":"chuoi rong hoac mo ta loi"}
+Neu khong co cau truc chuong muc, tao 1 chapter voi `chapter_number="0"`, `chapter_title=null`, `sections=[]`.
 """.strip()
 
 SHORT_FINAL_SYSTEM_PROMPT = """
-Hợp nhất mảng JSON các chunk thành 1 JSON tổng hợp đầy đủ, không bỏ sót chương mục.
-Chỉ dùng dữ liệu đã cho, không suy diễn, không viết gì ngoài JSON, không markdown.
-Gộp các chapter/section trùng số thứ tự, giữ tên gốc, sắp xếp tăng dần.
+Hop nhat mang JSON cac chunk thanh 1 JSON tong hop day du, khong bo sot chuong muc.
+Chi dung du lieu da cho, khong suy dien, khong viet gi ngoai JSON, khong markdown.
+Gop cac chapter/section trung so thu tu, giu ten goc, sap xep tang dan.
 Schema:
-{"chapters":[{"chapter_number":"1","chapter_title":"Tên chương hoặc null","chapter_summary":"3-5 câu","sections":[{"section_number":"1.1","section_title":"Tên mục","section_summary":"1-3 câu"}]}],"key_points":["8-12 ý chính"],"keywords":["8-15 từ khóa"],"unclear_sections":["các phần mơ hồ nếu có"]}
-Key points là câu hoàn chỉnh, bám sát nguồn. Keywords là tên riêng, thuật ngữ, khái niệm trọng tâm.
+{"chapters":[{"chapter_number":"1","chapter_title":"Ten chuong hoac null","chapter_summary":"3-5 cau","sections":[{"section_number":"1.1","section_title":"Ten muc","section_summary":"1-3 cau"}]}],"key_points":["8-12 y chinh"],"keywords":["8-15 tu khoa"],"unclear_sections":["cac phan mo ho neu co"]}
+Key points la cau hoan chinh, bam sat nguon. Keywords la ten rieng, thuat ngu, khai niem trong tam.
 """.strip()
 
 SHORT_KEYPOINTS_SYSTEM_PROMPT = """
-Trích xuất key_points và keywords từ JSON đầu vào.
-Chỉ dùng thông tin có sẵn, không suy diễn, không viết gì ngoài JSON, không markdown.
+Trich xuat key_points va keywords tu JSON dau vao.
+Chi dung thong tin co san, khong suy dien, khong viet gi ngoai JSON, khong markdown.
 Schema:
-{"key_points":["8-12 câu ý chính"],"keywords":["8-15 từ khóa ngắn"]}
+{"key_points":["8-12 cau y chinh"],"keywords":["8-15 tu khoa ngan"]}
 """.strip()
 
 CHUNK_SYSTEM_PROMPT = SHORT_CHUNK_SYSTEM_PROMPT
@@ -393,8 +393,8 @@ def _extract_outline_headings(text: str) -> List[str]:
     lines = [ln.strip() for ln in text.splitlines() if ln and ln.strip()]
     headings: List[str] = []
     patterns = [
-        r"^(chuong|chương)\s+\d+[\.: -].*",
-        r"^(muc|mục)\s+\d+[\.: -].*",
+        r"^(chuong|chng)\s+\d+[\.: -].*",
+        r"^(muc|mc)\s+\d+[\.: -].*",
         r"^\d+(\.\d+){0,3}\s+.+",
         r"^[ivxlcdm]+\.\s+.+",
     ]
@@ -416,7 +416,7 @@ def _extract_outline_headings(text: str) -> List[str]:
 def _chunk_text_by_headings(text: str, max_chars: int) -> List[str]:
     lines = text.splitlines()
     heading_re = re.compile(
-        r"^((chuong|chương)\s+\d+[\.: -].*|(muc|mục)\s+\d+[\.: -].*|\d+(\.\d+){0,3}\s+.+|[ivxlcdm]+\.\s+.+)$",
+        r"^((chuong|chng)\s+\d+[\.: -].*|(muc|mc)\s+\d+[\.: -].*|\d+(\.\d+){0,3}\s+.+|[ivxlcdm]+\.\s+.+)$",
         flags=re.IGNORECASE,
     )
     sections: List[List[str]] = []
@@ -461,30 +461,30 @@ def _chunk_text_by_headings(text: str, max_chars: int) -> List[str]:
 def _validate_source_text(text: str) -> None:
     words = text.split()
     if len(words) < 80:
-        raise RuntimeError("Ná»™i dung trÃ­ch xuáº¥t quÃ¡ ngáº¯n Ä‘á»ƒ tÃ³m táº¯t Ä‘áº§y Ä‘á»§.")
+        raise RuntimeError("Noi dung trich xuat qua ngan de tom tat day du.")
     alpha_count = sum(1 for ch in text if ch.isalpha())
     printable_count = sum(1 for ch in text if ch.isprintable())
     if printable_count == 0 or (alpha_count / max(printable_count, 1)) < 0.25:
-        raise RuntimeError("Ná»™i dung trÃ­ch xuáº¥t cháº¥t lÆ°á»£ng tháº¥p (cÃ³ thá»ƒ lÃ  PDF scan/lá»—i font).")
+        raise RuntimeError("Noi dung trich xuat chat luong thap (co the la PDF scan/loi font).")
     if text.count("\ufffd") > 10:
-        raise RuntimeError("Ná»™i dung trÃ­ch xuáº¥t bá»‹ lá»—i kÃ½ tá»±, khÃ´ng thá»ƒ tÃ³m táº¯t chÃ­nh xÃ¡c.")
+        raise RuntimeError("Noi dung trich xuat bi loi ky tu, khong the tom tat chinh xac.")
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
 # JSON parse / validate / repair helpers
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
 
 def _safe_parse_json(raw: str) -> Dict:
-    """Strip markdown fences náº¿u model váº«n tráº£ vá» ```json, rá»“i parse."""
+    """Strip markdown fences if the model returns ```json, then parse."""
     text = (raw or "").strip()
-    # Bá» ```json ... ``` náº¿u cÃ³
+    # Remove ```json ... ``` if present.
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     text = text.strip()
-    # TÃ¬m JSON object Ä‘áº§u tiÃªn trong response (phÃ²ng khi model thÃªm prose trÆ°á»›c)
+    # Find the first JSON object in the response.
     match = re.search(r"\{[\s\S]*\}", text)
     if not match:
-        raise RuntimeError("KhÃ´ng tÃ¬m tháº¥y JSON há»£p lá»‡ trong response.")
+        raise RuntimeError("Khong tim thay JSON hop le trong response.")
     candidate = match.group(0).strip()
     try:
         return _json.loads(candidate)
@@ -496,26 +496,26 @@ def _safe_parse_json(raw: str) -> Dict:
 
 
 def _validate_summary_json(data: Dict) -> None:
-    """Kiá»ƒm tra cáº¥u trÃºc JSON tÃ³m táº¯t tá»•ng há»£p."""
+    """Validate final summary JSON structure."""
     if not isinstance(data, dict):
-        raise RuntimeError("Response khÃ´ng pháº£i dict JSON.")
+        raise RuntimeError("Response khong phi dict JSON.")
     chapters = data.get("chapters")
     if not isinstance(chapters, list) or len(chapters) == 0:
-        raise RuntimeError("JSON thiáº¿u trÆ°á»ng 'chapters' hoáº·c rá»—ng.")
+        raise RuntimeError("JSON thieu truong 'chapters' hoac rong.")
     key_points = data.get("key_points")
     if not isinstance(key_points, list) or len(key_points) < 3:
-        raise RuntimeError("JSON thiáº¿u 'key_points' hoáº·c quÃ¡ Ã­t Ä‘iá»ƒm.")
-    # Kiá»ƒm tra THIEU_DU_LIEU lan rá»™ng
+        raise RuntimeError("JSON thieu 'key_points' hoac qua it diem.")
+    # Check excessive THIEU_DU_LIEU markers.
     raw_str = _json.dumps(data, ensure_ascii=False).lower()
     thieu_count = raw_str.count("thieu_du_lieu")
     if thieu_count > len(chapters) // 2:
-        raise RuntimeError("TÃ³m táº¯t chÆ°a Ä‘áº§y Ä‘á»§ â€” quÃ¡ nhiá»u [THIEU_DU_LIEU].")
+        raise RuntimeError("Tom tat chua day du, qua nhieu [THIEU_DU_LIEU].")
 
 
 def _merge_chunk_jsons(chunk_raws: List[str]) -> List[Dict]:
     """
-    Parse tá»«ng chunk raw string thÃ nh dict.
-    Náº¿u parse lá»—i â†’ giá»¯ láº¡i dáº¡ng {"raw_text": ...} Ä‘á»ƒ FINAL prompt váº«n xá»­ lÃ½ Ä‘Æ°á»£c.
+    Parse each raw chunk string into a dict.
+    If parsing fails, keep raw_text so the final step can still handle it.
     """
     result = []
     for raw in chunk_raws:
@@ -614,16 +614,16 @@ def _fallback_summary_json_from_chunks(chunk_dicts: List[Dict]) -> Dict:
 
 
 def _repair_summary_json(client: genai.Client, raw: str) -> Dict:
-    """Sá»­a JSON lá»—i cáº¥u trÃºc báº±ng cÃ¡ch gá»i láº¡i model."""
+    """Repair malformed summary JSON by calling the model."""
     if not bool(getattr(settings, "SUMMARY_ENABLE_MODEL_REPAIR", False)):
         raise RuntimeError("Model repair is disabled.")
     fixed_raw = _chat(
         client=client,
         system_prompt=(
-            "Chuyá»ƒn Ä‘á»•i ná»™i dung sau thÃ nh JSON há»£p lá»‡ theo Ä‘Ãºng cáº¥u trÃºc yÃªu cáº§u. "
-            "KHÃ”NG thay Ä‘á»•i ná»™i dung, KHÃ”NG thÃªm kiáº¿n thá»©c má»›i. "
-            "Tráº£ vá» JSON thuáº§n, khÃ´ng cÃ³ markdown, khÃ´ng cÃ³ text thá»«a. "
-            'Cáº¥u trÃºc báº¯t buá»™c: {"chapters": [...], "key_points": [...], '
+            "Convert the following content into valid JSON with the required schema. "
+            "Do not change content. Do not add new knowledge. "
+            "Return plain JSON only, no markdown and no extra text. "
+            'Required schema: {"chapters": [...], "key_points": [...], '
             '"keywords": [...], "unclear_sections": []}'
         ),
         user_prompt=raw[:4000],
@@ -633,24 +633,24 @@ def _repair_summary_json(client: genai.Client, raw: str) -> Dict:
 
 
 def _parse_key_points_from_json(data: Dict) -> List[str]:
-    """Láº¥y key_points tá»« JSON tÃ³m táº¯t Ä‘Ã£ parse."""
+    """Get key_points from parsed summary JSON."""
     return [str(p).strip() for p in data.get("key_points", []) if str(p).strip()]
 
 
 def _parse_keywords_from_json(data: Dict) -> List[str]:
-    """Láº¥y keywords tá»« JSON tÃ³m táº¯t Ä‘Ã£ parse."""
+    """Get keywords from parsed summary JSON."""
     return [str(k).strip() for k in data.get("keywords", []) if str(k).strip()]
 
 
 def _summary_json_to_text(data: Dict) -> str:
     """
-    Chuyá»ƒn JSON tÃ³m táº¯t thÃ nh plain text (tÆ°Æ¡ng thÃ­ch DB legacy / hiá»ƒn thá»‹ Ä‘Æ¡n giáº£n).
+    Convert summary JSON to plain text for legacy DB and simple UI rendering.
     """
     lines = []
     for ch in data.get("chapters", []):
         num = ch.get("chapter_number", "")
         title = ch.get("chapter_title") or ""
-        header = f"Chương {num}" if num and str(num) != "0" else ""
+        header = f"Chuong {num}" if num and str(num) != "0" else ""
         if title:
             header = f"{header}: {title}" if header else title
         if header:
@@ -660,7 +660,7 @@ def _summary_json_to_text(data: Dict) -> str:
         for sec in ch.get("sections", []):
             sec_num = sec.get("section_number", "")
             sec_title = sec.get("section_title") or ""
-            sec_header = f"Mục {sec_num}" if sec_num else ""
+            sec_header = f"Muc {sec_num}" if sec_num else ""
             if sec_title:
                 sec_header = f"{sec_header}: {sec_title}" if sec_header else sec_title
             if sec_header:
@@ -668,17 +668,17 @@ def _summary_json_to_text(data: Dict) -> str:
             if sec.get("section_summary"):
                 lines.append(sec["section_summary"])
     if data.get("key_points"):
-        lines.append("\n## Các ý chính")
+        lines.append("\n## Cac y chinh")
         lines.extend([f"- {p}" for p in data["key_points"]])
     if data.get("keywords"):
-        lines.append("\n## Từ khóa")
+        lines.append("\n## Tu khoa")
         lines.append(", ".join(data["keywords"]))
     return "\n\n".join(lines).strip()
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
 # Sanitize helpers
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
 
 def _sanitize_summary_text(summary_text: str) -> str:
     text = (summary_text or "").strip()
@@ -707,9 +707,9 @@ def _sanitize_key_points(points: List[str]) -> List[str]:
 
 
 def _sanitize_summary_json(data: Dict) -> Dict:
-    """LÃ m sáº¡ch cÃ¡c trÆ°á»ng trong summary JSON."""
+    """Sanitize summary JSON fields."""
     cleaned = dict(data)
-    # LÃ m sáº¡ch chapters
+    # Lm sch chapters
     chapters = []
     for ch in cleaned.get("chapters", []):
         ch_clean = dict(ch)
@@ -730,9 +730,9 @@ def _sanitize_summary_json(data: Dict) -> Dict:
     return cleaned
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
 # Coverage audit
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
 
 def _normalize_heading_for_match(s: str) -> str:
     s = unicodedata.normalize("NFKD", s.lower())
@@ -769,9 +769,9 @@ def _coverage_audit(source_text: str, summary_text: str) -> Dict:
     }
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
 # Storage helpers
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
 
 def _build_summary_json_payload(
     *,
@@ -813,13 +813,13 @@ def _upload_summary_json(
         content_type="application/json; charset=utf-8",
     )
     if status_code >= 400:
-        raise RuntimeError(f"KhÃ´ng lÆ°u Ä‘Æ°á»£c file JSON summary lÃªn Supabase Storage: {res}")
+        raise RuntimeError(f"Khong luu duoc file JSON summary len Supabase Storage: {res}")
     return object_path
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
 # Gemini client & chat helper
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
 
 def _gemini_client() -> genai.Client:
     api_key = getattr(settings, "GEMINI_API_KEY", "").strip()
@@ -922,9 +922,9 @@ def _chat_with_document(
     raise RuntimeError("Gemini: khong co response sau retry khi doc tai lieu.")
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# PDF scan fallback â€” chia trang, extract text, tÃ³m táº¯t tá»«ng batch
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
+# PDF scan fallback  chia trang, extract text, tm tt tng batch
+# 
 
 def _summarize_pdf_pages_via_text(
     *,
@@ -1025,9 +1025,9 @@ def _summarize_pdf_pages_via_text(
         "source_text": source_text,
     }
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# Main summarize pipeline â€” chunk by headings/paragraphs, retry náº¿u coverage tháº¥p
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
+# Main summarize pipeline: chunk by headings/paragraphs, retry if coverage is low
+# 
 
 def _summarize_with_chunks_retry(
     *,
@@ -1042,7 +1042,7 @@ def _summarize_with_chunks_retry(
         {"max_chars": max_chunk_chars, "extra_prompt": ""},
         {
             "max_chars": max(3000, int(max_chunk_chars * 0.75)),
-            "extra_prompt": "Táº­p trung bao phá»§ Ä‘áº§y Ä‘á»§ tá»«ng chÆ°Æ¡ng/má»¥c, khÃ´ng bá» sÃ³t.",
+            "extra_prompt": "Tap trung bao phu day du tung chuong/muc, khong bo sot.",
         },
     ]
     max_attempts  = int(getattr(settings, "SUMMARY_RETRY_ATTEMPTS", "1"))
@@ -1064,7 +1064,7 @@ def _summarize_with_chunks_retry(
         if not chunks:
             chunks = _chunk_text(text, max_chars=int(plan["max_chars"]))
         if not chunks:
-            raise RuntimeError("KhÃ´ng tÃ¡ch Ä‘Æ°á»£c chunk.")
+            raise RuntimeError("Khong tach duoc chunk.")
 
         chunk_raws: List[str] = []
         total = len(chunks)
@@ -1074,7 +1074,7 @@ def _summarize_with_chunks_retry(
                 client=client,
                 system_prompt=CHUNK_SYSTEM_PROMPT,
                 user_prompt=(
-                    f"[PHáº¦N {idx}/{total}] {plan['extra_prompt']}\n\n{chunk}"
+                    f"[PHAN {idx}/{total}] {plan['extra_prompt']}\n\n{chunk}"
                 ),
                 max_tokens=int(getattr(settings, "SUMMARY_CHUNK_MAX_TOKENS", "650")),
             )
@@ -1083,7 +1083,7 @@ def _summarize_with_chunks_retry(
             if idx == total or idx % 2 == 0:
                 supabase_client.update_summary_job(job_id, {"progress": progress})
 
-        # Gá»™p cÃ¡c chunk JSON â†’ gá»i FINAL
+        # Merge chunk JSONs, then call final summary.
         merged_chunks = _merge_chunk_jsons(chunk_raws)
         merged_input  = _json.dumps(merged_chunks, ensure_ascii=False)
 
@@ -1134,27 +1134,27 @@ def _summarize_with_chunks_retry(
     return best
 
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
 # Main entry point
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# 
 
 def process_summary_job(job_id: str) -> None:
     claimed_row, claimed_status = supabase_client.claim_summary_job(job_id)
     if claimed_status >= 400:
-        raise RuntimeError("KhÃ´ng claim Ä‘Æ°á»£c job Ä‘á»ƒ xá»­ lÃ½.")
+        raise RuntimeError("Khong claim duoc job de xu ly.")
     if not claimed_row:
         return
 
     try:
         bucket = getattr(settings, "SUPABASE_STORAGE_BUCKET", "study-documents")
 
-        # â”€â”€ 1. Táº£i file â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # 1. Download file.
         blob, blob_status = supabase_client.download_storage_file(
             bucket=bucket,
             object_path=str(claimed_row.get("storage_path", "")),
         )
         if blob_status >= 400 or not isinstance(blob, (bytes, bytearray)):
-            raise RuntimeError("KhÃ´ng táº£i Ä‘Æ°á»£c file tá»« Supabase Storage.")
+            raise RuntimeError("Khong tai duoc file tu Supabase Storage.")
 
         file_name  = str(claimed_row.get("file_name", ""))
         user_id    = str(claimed_row.get("id_user", ""))
@@ -1237,7 +1237,7 @@ def process_summary_job(job_id: str) -> None:
             final_summary_text = summarized["summary_text"]
             coverage           = summarized["coverage"]
 
-        # â”€â”€ 4. Key points & keywords â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        #  4. Key points & keywords 
         supabase_client.update_summary_job(job_id, {"progress": 88})
 
         key_points: List[str] = _sanitize_key_points(
@@ -1245,7 +1245,7 @@ def process_summary_job(job_id: str) -> None:
         )
         keywords: List[str] = _parse_keywords_from_json(summary_data)
 
-        # Fallback: náº¿u key_points rá»—ng â†’ gá»i KEYPOINTS_SYSTEM_PROMPT
+        # Fallback: call KEYPOINTS_SYSTEM_PROMPT if key_points is empty.
         if not key_points and bool(getattr(settings, "SUMMARY_ENABLE_KEYPOINTS_FALLBACK", False)):
             raw_kp = _chat(
                 client=client,
@@ -1259,7 +1259,7 @@ def process_summary_job(job_id: str) -> None:
                 if not keywords:
                     keywords = [str(k).strip() for k in kp_data.get("keywords", []) if str(k).strip()]
             except Exception:
-                # Fallback text parse náº¿u JSON lá»—i
+                # Fallback text parse if JSON parsing fails.
                 key_points = _sanitize_key_points(
                     [
                         re.sub(r"^[^\w\[]+\s*", "", ln.strip())
@@ -1269,11 +1269,11 @@ def process_summary_job(job_id: str) -> None:
                 )
 
         if not key_points:
-            raise RuntimeError("KhÃ´ng trÃ­ch Ä‘Æ°á»£c cÃ¡c Ã½ chÃ­nh Ä‘áº¡t yÃªu cáº§u.")
+            raise RuntimeError("Khong trich duoc cac y chinh dat yeu cau.")
 
         final_summary_text = _sanitize_summary_text(final_summary_text)
 
-        # â”€â”€ 5. LÆ°u DB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # 5. Save result to DB.
         supabase_client.update_summary_job(
             job_id,
             {
@@ -1289,7 +1289,7 @@ def process_summary_job(job_id: str) -> None:
             },
         )
 
-        # â”€â”€ 6. LÆ°u JSON file lÃªn Storage (non-blocking) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # 6. Save JSON file to Storage (non-blocking).
         try:
             payload = _build_summary_json_payload(
                 job_id=job_id,
@@ -1308,7 +1308,7 @@ def process_summary_job(job_id: str) -> None:
                 payload=payload,
             )
         except Exception:
-            # KhÃ´ng fail cáº£ job náº¿u lÆ°u JSON lá»—i
+            # Do not fail the whole job if JSON storage upload fails.
             pass
 
     except Exception as exc:
@@ -1318,7 +1318,7 @@ def process_summary_job(job_id: str) -> None:
                 "status": "failed",
                 "progress": 100,
                 "finished_at": now_iso(),
-                "error_message": str(exc)[:1000] if str(exc) else "KhÃ´ng rÃµ lá»—i.",
+                "error_message": str(exc)[:1000] if str(exc) else "Khong ro loi.",
             },
         )
 

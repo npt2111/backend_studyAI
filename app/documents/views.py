@@ -19,6 +19,10 @@ from .services import _validate_document_file, normalize_job, now_iso
 ALLOWED_EXTS = {".pdf", ".docx"}
 
 
+def _maybe_start_inline_summary_job(job_id: str) -> bool:
+    return submit_summary_job(str(job_id))
+
+
 def _extract_first_error(errors) -> str:
     if isinstance(errors, dict):
         for value in errors.values():
@@ -117,12 +121,13 @@ class UploadDocumentApiView(APIView):
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
 
-            submit_summary_job(job_id)
+            worker_started = _maybe_start_inline_summary_job(job_id)
 
             return Response(
                 {
-                    "message": "Upload thanh cong, da tao job xu ly.",
+                    "message": "Upload thanh cong, da tao job cho worker xu ly.",
                     "job": normalize_job(job_row),
+                    "worker_started": worker_started,
                 },
                 status=status.HTTP_202_ACCEPTED,
             )
@@ -157,7 +162,7 @@ class SummaryJobDetailApiView(APIView):
                 return Response({"message": "Ban khong co quyen xem job nay."}, status=status.HTTP_403_FORBIDDEN)
 
             if str(row.get("status", "")).lower() == "queued":
-                submit_summary_job(str(row.get("id_job")))
+                _maybe_start_inline_summary_job(str(row.get("id_job")))
 
             return Response({"job": normalize_job(row)}, status=status.HTTP_200_OK)
 
@@ -184,7 +189,7 @@ class SummaryJobListApiView(APIView):
 
             for row in rows:
                 if str(row.get("status", "")).lower() == "queued":
-                    submit_summary_job(str(row.get("id_job")))
+                    _maybe_start_inline_summary_job(str(row.get("id_job")))
 
             return Response({"jobs": [normalize_job(r) for r in rows]}, status=status.HTTP_200_OK)
 
@@ -222,7 +227,9 @@ class RetrySummaryJobApiView(APIView):
                     "status": "queued",
                     "progress": 0,
                     "summary_text": None,
+                    "summary_json": None,
                     "key_points": [],
+                    "keywords": [],
                     "error_message": None,
                     "started_at": None,
                     "finished_at": None,
@@ -232,8 +239,15 @@ class RetrySummaryJobApiView(APIView):
             if updated_status >= 400:
                 return Response({"message": "Khong retry duoc job."}, status=status.HTTP_502_BAD_GATEWAY)
 
-            submit_summary_job(str(job_id))
-            return Response({"message": "Da retry job.", "job": normalize_job(updated_row)}, status=status.HTTP_202_ACCEPTED)
+            worker_started = _maybe_start_inline_summary_job(str(job_id))
+            return Response(
+                {
+                    "message": "Da retry job.",
+                    "job": normalize_job(updated_row),
+                    "worker_started": worker_started,
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
 
         except SupabaseConfigError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
