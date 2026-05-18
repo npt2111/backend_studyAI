@@ -160,6 +160,9 @@ SUMMARY_MAX_FILE_MB      = int(os.getenv("SUMMARY_MAX_FILE_MB", "20"))
 SUMMARY_CHUNK_CHARS      = int(os.getenv("SUMMARY_CHUNK_CHARS", "7000"))
 SUMMARY_MAX_SOURCE_CHARS = int(os.getenv("SUMMARY_MAX_SOURCE_CHARS", "120000"))
 SUMMARY_WORKER_THREADS   = int(os.getenv("SUMMARY_WORKER_THREADS", "1"))
+# Keep heavy document processing out of the web process by default.
+# Set SUMMARY_USE_INLINE_WORKER=true only for quick local all-in-one testing.
+SUMMARY_USE_INLINE_WORKER = env_bool("SUMMARY_USE_INLINE_WORKER", False)
 SUMMARY_RETRY_ATTEMPTS   = int(os.getenv("SUMMARY_RETRY_ATTEMPTS", "1"))
 SUMMARY_PDF_PAGES_PER_CHUNK = int(os.getenv("SUMMARY_PDF_PAGES_PER_CHUNK", "16"))
 
