@@ -102,9 +102,6 @@ Cau truc JSON dau ra:
   "key_points": [
     "Y chinh quan trong nhat, 12-24 diem, moi diem 1-2 cau, bam sat nguon."
   ],
-  "keywords": [
-    "Thuat ngu, khai niem, ten rieng quan trong nhat, 8-20 tu khoa ngan."
-  ],
   "unclear_sections": [
     "Liet ke cac phan bi thieu, loi, cat ngan neu co; de mang rong neu khong co."
   ]
@@ -114,11 +111,6 @@ Huong dan key_points:
 - 12-24 diem, uu tien y mang tinh ket luan, dinh nghia, so lieu, phuong phap cot loi.
 - Moi diem la mot cau hoan chinh, co the dung doc lap, khong viet tat.
 
-Huong dan keywords:
-- Chi lay ten rieng, thuat ngu chuyen nganh, khai niem trong tam.
-- Khong dung tu pho thong nhu "phuong phap", "ket qua", "he thong".
-- Moi keyword la 1-4 tu, viet hoa dung chuan.
-
 Huong dan hop nhat chapters:
 - Neu nhieu chunks deu co "Chuong 2", gop tat ca sections va mo rong chapter_summary.
 - Loai bo trung lap, giu thong tin day du nhat tu moi chunk.
@@ -126,7 +118,7 @@ Huong dan hop nhat chapters:
 
 
 KEYPOINTS_SYSTEM_PROMPT = """
-Trich xuat key_points va keywords tu JSON tom tat dau vao.
+Trich xuat key_points tu JSON tom tat dau vao.
 
 Quy tac:
 - Chi dung thong tin co trong dau vao, khong suy dien.
@@ -139,14 +131,10 @@ JSON dau ra:
   "key_points": [
     "Y chinh 1, cau hoan chinh, bam sat nguon.",
     "Y chinh 2, cau hoan chinh, bam sat nguon."
-  ],
-  "keywords": [
-    "Thuat ngu ngan 1",
-    "Thuat ngu ngan 2"
   ]
 }
 
-Tra ve 12-24 key_points va 8-20 keywords.
+Tra ve 12-24 key_points.
 """.strip()
 
 
@@ -169,15 +157,15 @@ Hop nhat mang JSON cac chunk thanh 1 JSON tong hop day du, khong bo sot chuong m
 Chi dung du lieu da cho, khong suy dien, khong viet gi ngoai JSON, khong markdown.
 Gop cac chapter/section trung so thu tu, giu ten goc, sap xep tang dan.
 Schema:
-{"chapters":[{"chapter_number":"1","chapter_title":"Ten chuong hoac null","chapter_summary":"3-5 cau","sections":[{"section_number":"1.1","section_title":"Ten muc","section_summary":"1-3 cau"}]}],"key_points":["8-12 y chinh"],"keywords":["8-15 tu khoa"],"unclear_sections":["cac phan mo ho neu co"]}
-Key points la cau hoan chinh, bam sat nguon. Keywords la ten rieng, thuat ngu, khai niem trong tam.
+{"chapters":[{"chapter_number":"1","chapter_title":"Ten chuong hoac null","chapter_summary":"3-5 cau","sections":[{"section_number":"1.1","section_title":"Ten muc","section_summary":"1-3 cau"}]}],"key_points":["8-12 y chinh"],"unclear_sections":["cac phan mo ho neu co"]}
+Key points la cau hoan chinh, bam sat nguon.
 """.strip()
 
 SHORT_KEYPOINTS_SYSTEM_PROMPT = """
-Trich xuat key_points va keywords tu JSON dau vao.
+Trich xuat key_points tu JSON dau vao.
 Chi dung thong tin co san, khong suy dien, khong viet gi ngoai JSON, khong markdown.
 Schema:
-{"key_points":["8-12 cau y chinh"],"keywords":["8-15 tu khoa ngan"]}
+{"key_points":["8-12 cau y chinh"]}
 """.strip()
 
 CHUNK_SYSTEM_PROMPT = SHORT_CHUNK_SYSTEM_PROMPT
@@ -204,7 +192,6 @@ def normalize_job(row: Dict) -> Dict:
         "summary_text": row.get("summary_text"),
         "summary_json": row.get("summary_json"),
         "key_points": key_points,
-        "keywords": row.get("keywords") or [],
         "error": row.get("error_message"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -478,6 +465,55 @@ def _extract_pdf_markdown_with_pdfplumber_easyocr(file_bytes: bytes) -> str:
     return text
 
 
+def _extract_pdf_markdown_with_pdfplumber_pymupdf(file_bytes: bytes) -> str:
+    try:
+        import pdfplumber
+    except ImportError as exc:
+        raise RuntimeError("pdfplumber chua duoc cai dat.") from exc
+
+    try:
+        import fitz
+    except ImportError as exc:
+        raise RuntimeError("PyMuPDF chua duoc cai dat.") from exc
+
+    blocks: List[str] = []
+    text_pages = 0
+    pymupdf_pages: List[int] = []
+    max_pages = int(getattr(settings, "PDF_OCR_MAX_PAGES", "0"))
+
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    try:
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            total_pages = len(pdf.pages)
+            for idx, page in enumerate(pdf.pages, start=1):
+                if max_pages > 0 and idx > max_pages:
+                    logger.warning("PDF text extraction stopped at configured page limit %s/%s.", max_pages, total_pages)
+                    break
+
+                page_text = _cleanup_text(page.extract_text() or "")
+                source = "pdfplumber"
+                if not _is_page_text_good(page_text) and idx - 1 < len(doc):
+                    page_text = _cleanup_text(doc[idx - 1].get_text("text") or "")
+                    source = "pymupdf"
+                    if page_text:
+                        pymupdf_pages.append(idx)
+
+                if page_text:
+                    text_pages += 1
+                    blocks.append(f"## Page {idx} ({source})\n\n{page_text}")
+
+                if hasattr(page, "flush_cache"):
+                    page.flush_cache()
+                gc.collect()
+    finally:
+        doc.close()
+
+    text = _cleanup_text("\n\n".join(blocks))
+    if text:
+        logger.info("PDF parsed with pdfplumber/pymupdf: text_pages=%s, pymupdf_pages=%s", text_pages, pymupdf_pages)
+    return text
+
+
 def _extract_pdf_pages(file_bytes: bytes) -> List[str]:
     reader = PdfReader(io.BytesIO(file_bytes))
     return [(page.extract_text() or "").strip() for page in reader.pages]
@@ -748,7 +784,6 @@ def _merge_chunk_jsons(chunk_raws: List[str]) -> List[Dict]:
 def _fallback_summary_json_from_chunks(chunk_dicts: List[Dict]) -> Dict:
     chapters: List[Dict] = []
     key_points: List[str] = []
-    keywords: List[str] = []
     unclear_sections: List[str] = []
 
     chapter_map: Dict[str, Dict] = {}
@@ -795,11 +830,6 @@ def _fallback_summary_json_from_chunks(chunk_dicts: List[Dict]) -> Dict:
             if text and text not in key_points:
                 key_points.append(text)
 
-        for kw in item.get("keywords", []) if isinstance(item, dict) else []:
-            text = str(kw).strip()
-            if text and text not in keywords:
-                keywords.append(text)
-
         for unclear in item.get("unclear_sections", []) if isinstance(item, dict) else []:
             text = str(unclear).strip()
             if text and text not in unclear_sections:
@@ -827,7 +857,6 @@ def _fallback_summary_json_from_chunks(chunk_dicts: List[Dict]) -> Dict:
     return {
         "chapters": chapters,
         "key_points": key_points[:12],
-        "keywords": keywords[:15],
         "unclear_sections": unclear_sections[:20],
     }
 
@@ -842,8 +871,7 @@ def _repair_summary_json(client: genai.Client, raw: str) -> Dict:
             "Convert the following content into valid JSON with the required schema. "
             "Do not change content. Do not add new knowledge. "
             "Return plain JSON only, no markdown and no extra text. "
-            'Required schema: {"chapters": [...], "key_points": [...], '
-            '"keywords": [...], "unclear_sections": []}'
+            'Required schema: {"chapters": [...], "key_points": [...], "unclear_sections": []}'
         ),
         user_prompt=raw[:4000],
         max_tokens=int(getattr(settings, "SUMMARY_REPAIR_MAX_TOKENS", "900")),
@@ -854,11 +882,6 @@ def _repair_summary_json(client: genai.Client, raw: str) -> Dict:
 def _parse_key_points_from_json(data: Dict) -> List[str]:
     """Get key_points from parsed summary JSON."""
     return [str(p).strip() for p in data.get("key_points", []) if str(p).strip()]
-
-
-def _parse_keywords_from_json(data: Dict) -> List[str]:
-    """Get keywords from parsed summary JSON."""
-    return [str(k).strip() for k in data.get("keywords", []) if str(k).strip()]
 
 
 def _summary_json_to_text(data: Dict) -> str:
@@ -889,9 +912,6 @@ def _summary_json_to_text(data: Dict) -> str:
     if data.get("key_points"):
         lines.append("\n## Cac y chinh")
         lines.extend([f"- {p}" for p in data["key_points"]])
-    if data.get("keywords"):
-        lines.append("\n## Tu khoa")
-        lines.append(", ".join(data["keywords"]))
     return "\n\n".join(lines).strip()
 
 
@@ -910,6 +930,7 @@ def _sanitize_summary_text(summary_text: str) -> str:
 
 def _sanitize_key_points(points: List[str]) -> List[str]:
     cleaned_points: List[str] = []
+    seen = set()
     for p in points:
         t = _sanitize_summary_text(p)
         t = re.sub(
@@ -921,6 +942,10 @@ def _sanitize_key_points(points: List[str]) -> List[str]:
             continue
         if "thieu_du_lieu" in t.lower() or t.lower() == "error":
             continue
+        key = t.lower()
+        if key in seen:
+            continue
+        seen.add(key)
         cleaned_points.append(t)
     return cleaned_points[:12]
 
@@ -961,6 +986,27 @@ def _derive_key_points_from_summary_json(data: Dict) -> List[str]:
     return points[:12]
 
 
+def _derive_key_points_from_summary_text(summary_text: str) -> List[str]:
+    text = _sanitize_summary_text(summary_text)
+    if not text:
+        return []
+
+    candidates: List[str] = []
+    for line in text.splitlines():
+        cleaned = re.sub(r"^\s*[-*#\d\.\)\(]+\s*", "", line).strip()
+        if len(cleaned.split()) >= 6:
+            candidates.append(cleaned)
+
+    if not candidates:
+        candidates = [
+            part.strip()
+            for part in re.split(r"(?<=[.!?])\s+", text)
+            if len(part.strip().split()) >= 6
+        ]
+
+    return _sanitize_key_points(candidates[:12])
+
+
 def _sanitize_summary_json(data: Dict) -> Dict:
     """Sanitize summary JSON fields."""
     cleaned = dict(data)
@@ -980,7 +1026,7 @@ def _sanitize_summary_json(data: Dict) -> Dict:
             chapters.append(ch_clean)
     cleaned["chapters"] = chapters
     cleaned["key_points"] = _sanitize_key_points(cleaned.get("key_points", []))
-    cleaned["keywords"] = [str(k).strip() for k in cleaned.get("keywords", []) if str(k).strip()][:20]
+    cleaned.pop("keywords", None)
     cleaned["unclear_sections"] = [str(s).strip() for s in cleaned.get("unclear_sections", []) if str(s).strip()]
     return cleaned
 
@@ -1004,7 +1050,7 @@ def _coverage_audit(source_text: str, summary_text: str) -> Dict:
             "source_headings": [],
             "matched_headings": [],
             "missing_headings": [],
-            "coverage_ratio": 0.0,
+            "coverage_ratio": 1.0 if _sanitize_summary_text(summary_text) else 0.0,
         }
     summary_norm = _normalize_heading_for_match(summary_text)
     matched: List[str] = []
@@ -1035,7 +1081,6 @@ def _build_summary_json_payload(
     summary_text: str,
     summary_json: Dict,
     key_points: List[str],
-    keywords: List[str],
     source_word_count: int,
     coverage: Dict,
 ) -> Dict:
@@ -1045,7 +1090,6 @@ def _build_summary_json_payload(
         "summary_text": summary_text,
         "summary_json": summary_json,
         "key_points": key_points,
-        "keywords": keywords,
         "source_word_count": source_word_count,
         "coverage": coverage,
         "generated_at": now_iso(),
@@ -1198,8 +1242,45 @@ def _chat_groq(system_prompt: str, user_prompt: str, max_tokens: int) -> str:
     raise RuntimeError("Groq: khong co response sau retry.")
 
 
+def _chat_ollama(system_prompt: str, user_prompt: str, max_tokens: int) -> str:
+    base_url = str(getattr(settings, "OLLAMA_BASE_URL", "http://localhost:11434") or "http://localhost:11434").rstrip("/")
+    model = str(getattr(settings, "OLLAMA_MODEL", "llama3.2:1b") or "llama3.2:1b").strip()
+    timeout = int(getattr(settings, "OLLAMA_TIMEOUT_SECONDS", "180"))
+
+    payload = {
+        "model": model,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "options": {
+            "temperature": 0.2,
+            "num_predict": max_tokens,
+        },
+    }
+    response = requests.post(
+        f"{base_url}/api/chat",
+        json=payload,
+        timeout=timeout,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"Ollama loi {response.status_code}: {response.text[:500]}")
+
+    data = response.json()
+    message = data.get("message") if isinstance(data, dict) else None
+    content = str((message or {}).get("content") or "").strip()
+    if not content:
+        content = str(data.get("response") or "").strip() if isinstance(data, dict) else ""
+    if not content:
+        raise RuntimeError("Ollama tra ve noi dung rong.")
+    return content
+
+
 def _chat(client: genai.Client, system_prompt: str, user_prompt: str, max_tokens: int) -> str:
     provider = str(getattr(settings, "SUMMARY_LLM_PROVIDER", "groq") or "groq").lower()
+    if provider == "ollama":
+        return _chat_ollama(system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=max_tokens)
     if provider == "groq":
         return _chat_groq(system_prompt=system_prompt, user_prompt=user_prompt, max_tokens=max_tokens)
 
@@ -1489,7 +1570,10 @@ def _summarize_with_chunks_retry(
                 "coverage": coverage,
             }
 
-        if coverage.get("coverage_ratio", 0.0) > best["coverage"]["coverage_ratio"]:
+        if summary_text and (
+            not best.get("summary_text")
+            or coverage.get("coverage_ratio", 0.0) >= best["coverage"]["coverage_ratio"]
+        ):
             best = {
                 "summary_data": summary_data,
                 "summary_text": summary_text,
@@ -1542,7 +1626,7 @@ def process_summary_job(job_id: str) -> None:
         supabase_client.update_summary_job(job_id, {"progress": 20})
 
         llm_provider = str(getattr(settings, "SUMMARY_LLM_PROVIDER", "groq") or "groq").lower()
-        client: Optional[genai.Client] = None if llm_provider == "groq" else _gemini_client()
+        client: Optional[genai.Client] = None if llm_provider in {"groq", "ollama"} else _gemini_client()
         coverage: Dict = {
             "coverage_ratio": 0.0,
             "source_headings": [],
@@ -1560,6 +1644,9 @@ def process_summary_job(job_id: str) -> None:
                     raise RuntimeError("Mistral OCR chua duoc bat cho PDF.")
                 text = _cleanup_text(_extract_pdf_text_with_mistral_ocr(bytes(blob)))
                 logger.info("Mistral OCR extracted PDF markdown for job %s.", job_id)
+            elif reader in {"pdfplumber_pymupdf", "pymupdf"}:
+                text = _extract_pdf_markdown_with_pdfplumber_pymupdf(bytes(blob))
+                logger.info("pdfplumber/pymupdf extracted PDF markdown for job %s.", job_id)
             elif reader in {"pdfplumber", "pdfplumber_easyocr", "easyocr"}:
                 text = _extract_pdf_markdown_with_pdfplumber_easyocr(bytes(blob))
                 logger.info("pdfplumber/easyocr extracted PDF markdown for job %s.", job_id)
@@ -1604,13 +1691,12 @@ def process_summary_job(job_id: str) -> None:
             final_summary_text = summarized["summary_text"]
             coverage           = summarized["coverage"]
 
-        #  4. Key points & keywords 
+        # 4. Key points.
         supabase_client.update_summary_job(job_id, {"progress": 88})
 
         key_points: List[str] = _sanitize_key_points(
             _parse_key_points_from_json(summary_data)
         )
-        keywords: List[str] = _parse_keywords_from_json(summary_data)
 
         # Fallback: call KEYPOINTS_SYSTEM_PROMPT if key_points is empty.
         if not key_points and bool(getattr(settings, "SUMMARY_ENABLE_KEYPOINTS_FALLBACK", False)):
@@ -1623,8 +1709,6 @@ def process_summary_job(job_id: str) -> None:
             try:
                 kp_data    = _safe_parse_json(raw_kp)
                 key_points = _sanitize_key_points(kp_data.get("key_points", []))
-                if not keywords:
-                    keywords = [str(k).strip() for k in kp_data.get("keywords", []) if str(k).strip()]
             except Exception:
                 # Fallback text parse if JSON parsing fails.
                 key_points = _sanitize_key_points(
@@ -1639,12 +1723,43 @@ def process_summary_job(job_id: str) -> None:
             key_points = _sanitize_key_points(_derive_key_points_from_summary_json(summary_data))
 
         if not key_points:
-            raise RuntimeError("Khong trich duoc cac y chinh dat yeu cau.")
+            key_points = _derive_key_points_from_summary_text(final_summary_text)
+
+        if not key_points and final_summary_text.strip():
+            key_points = ["Tom tat da duoc tao, nhung model khong tra ve danh sach y chinh rieng."]
+
+        if not key_points:
+            raise RuntimeError("Khong tao duoc tom tat tu noi dung file.")
 
         final_summary_text = _sanitize_summary_text(final_summary_text)
+        if not final_summary_text:
+            final_summary_text = _summary_json_to_text(summary_data)
+            final_summary_text = _sanitize_summary_text(final_summary_text)
+        if not final_summary_text:
+            raise RuntimeError("Khong tao duoc summary_text tu noi dung file.")
+
+        summary_data["key_points"] = key_points
+        summary_data = _sanitize_summary_json(summary_data)
+        key_points = _sanitize_key_points(summary_data.get("key_points", []))
+
+        payload = _build_summary_json_payload(
+            job_id=job_id,
+            file_name=file_name,
+            summary_text=final_summary_text,
+            summary_json=summary_data,
+            key_points=key_points,
+            source_word_count=len(text.split()),
+            coverage=coverage,
+        )
+        _upload_summary_json(
+            bucket=bucket,
+            user_id=user_id,
+            job_id=job_id,
+            payload=payload,
+        )
 
         # 5. Save result to DB.
-        supabase_client.update_summary_job(
+        saved_row, saved_status = supabase_client.update_summary_job(
             job_id,
             {
                 "status": "done",
@@ -1652,34 +1767,13 @@ def process_summary_job(job_id: str) -> None:
                 "summary_text": final_summary_text,
                 "summary_json": summary_data,
                 "key_points": key_points,
-                "keywords": keywords,
                 "source_word_count": len(text.split()),
                 "finished_at": now_iso(),
                 "error_message": None,
             },
         )
-
-        # 6. Save JSON file to Storage (non-blocking).
-        try:
-            payload = _build_summary_json_payload(
-                job_id=job_id,
-                file_name=file_name,
-                summary_text=final_summary_text,
-                summary_json=summary_data,
-                key_points=key_points,
-                keywords=keywords,
-                source_word_count=len(text.split()),
-                coverage=coverage,
-            )
-            _upload_summary_json(
-                bucket=bucket,
-                user_id=user_id,
-                job_id=job_id,
-                payload=payload,
-            )
-        except Exception:
-            # Do not fail the whole job if JSON storage upload fails.
-            pass
+        if saved_status >= 400:
+            raise RuntimeError(f"Khong luu duoc tom tat vao Supabase DB: {saved_row}")
 
     except Exception as exc:
         supabase_client.update_summary_job(
@@ -1691,9 +1785,4 @@ def process_summary_job(job_id: str) -> None:
                 "error_message": str(exc)[:1000] if str(exc) else "Khong ro loi.",
             },
         )
-
-
-
-
-
-
+        raise
