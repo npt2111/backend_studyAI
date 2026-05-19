@@ -229,7 +229,6 @@ class RetrySummaryJobApiView(APIView):
                     "summary_text": None,
                     "summary_json": None,
                     "key_points": [],
-                    "keywords": [],
                     "error_message": None,
                     "started_at": None,
                     "finished_at": None,

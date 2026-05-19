@@ -16,3 +16,4 @@ pdfplumber
 easyocr
 Pillow
 numpy
+PyMuPDF
