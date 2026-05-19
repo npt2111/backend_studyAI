@@ -139,33 +139,12 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 
-# â”€â”€ Groq config (thay tháº¿ Gemini) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
-GROQ_MODEL   = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-
-# Retry settings (dÃ¹ng chung cho Groq)
-GROQ_RETRY_MAX          = int(os.getenv("GROQ_RETRY_MAX", "3"))
-GROQ_RETRY_BASE_SECONDS = float(os.getenv("GROQ_RETRY_BASE_SECONDS", "8"))
+# Local LLM used by the summary worker.
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:1b")
 OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "").strip()
-MISTRAL_OCR_MODEL = os.getenv("MISTRAL_OCR_MODEL", "mistral-ocr-latest")
-MISTRAL_OCR_ENABLED = env_bool("MISTRAL_OCR_ENABLED", False)
-MISTRAL_OCR_TIMEOUT_SECONDS = int(os.getenv("MISTRAL_OCR_TIMEOUT_SECONDS", "180"))
-MISTRAL_OCR_MIN_WORDS = int(os.getenv("MISTRAL_OCR_MIN_WORDS", "80"))
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
-GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
-GEMINI_RETRY_MAX = int(os.getenv("GEMINI_RETRY_MAX", "3"))
-GEMINI_RETRY_BASE_SECONDS = float(os.getenv("GEMINI_RETRY_BASE_SECONDS", "8"))
-DOCLING_ENABLED = env_bool("DOCLING_ENABLED", True)
-DOCLING_DO_OCR = env_bool("DOCLING_DO_OCR", False)
-DOCLING_FORCE_FULL_PAGE_OCR = env_bool("DOCLING_FORCE_FULL_PAGE_OCR", False)
-DOCLING_PDF_ENABLED = env_bool("DOCLING_PDF_ENABLED", False)
-DOCLING_TABLE_STRUCTURE = env_bool("DOCLING_TABLE_STRUCTURE", False)
-DOCLING_PDF_FALLBACK_TEXT_LAYER = env_bool("DOCLING_PDF_FALLBACK_TEXT_LAYER", True)
-TESSERACT_CMD = os.getenv("TESSERACT_CMD", "").strip()
+
+# PDF reader settings: pdfplumber first, EasyOCR only for pages with weak text.
 PDFPLUMBER_TEXT_MIN_WORDS_PER_PAGE = int(os.getenv("PDFPLUMBER_TEXT_MIN_WORDS_PER_PAGE", "20"))
 EASYOCR_ENABLED = env_bool("EASYOCR_ENABLED", True)
 EASYOCR_LANGS = os.getenv("EASYOCR_LANGS", "vi,en")
@@ -175,29 +154,18 @@ EASYOCR_MAX_IMAGE_SIDE = int(os.getenv("EASYOCR_MAX_IMAGE_SIDE", "1800"))
 EASYOCR_PARAGRAPH = env_bool("EASYOCR_PARAGRAPH", False)
 PDF_OCR_MAX_PAGES = int(os.getenv("PDF_OCR_MAX_PAGES", "0"))
 
-# â”€â”€ Supabase Storage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Supabase Storage
 SUPABASE_STORAGE_BUCKET  = os.getenv("SUPABASE_STORAGE_BUCKET", "study-documents")
 
-# â”€â”€ Summary pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Summary pipeline
 SUMMARY_MAX_FILE_MB      = int(os.getenv("SUMMARY_MAX_FILE_MB", "20"))
-SUMMARY_CHUNK_CHARS      = int(os.getenv("SUMMARY_CHUNK_CHARS", "7000"))
-SUMMARY_MAX_SOURCE_CHARS = int(os.getenv("SUMMARY_MAX_SOURCE_CHARS", "120000"))
+SUMMARY_CHUNK_CHARS      = int(os.getenv("SUMMARY_CHUNK_CHARS", "2500"))
 SUMMARY_WORKER_THREADS   = int(os.getenv("SUMMARY_WORKER_THREADS", "1"))
 # Keep heavy document processing out of the web process by default.
 # Set SUMMARY_USE_INLINE_WORKER=true only for quick local all-in-one testing.
 SUMMARY_USE_INLINE_WORKER = env_bool("SUMMARY_USE_INLINE_WORKER", False)
-SUMMARY_DOCUMENT_READER = os.getenv("SUMMARY_DOCUMENT_READER", "docling").strip().lower()
-SUMMARY_LLM_PROVIDER = os.getenv("SUMMARY_LLM_PROVIDER", "groq").strip().lower()
-SUMMARY_RETRY_ATTEMPTS   = int(os.getenv("SUMMARY_RETRY_ATTEMPTS", "1"))
-SUMMARY_PDF_PAGES_PER_CHUNK = int(os.getenv("SUMMARY_PDF_PAGES_PER_CHUNK", "16"))
-
-# Token budgets (Groq)
-SUMMARY_CHUNK_MAX_TOKENS = int(os.getenv("SUMMARY_CHUNK_MAX_TOKENS", "650"))
-SUMMARY_FINAL_MAX_TOKENS = int(os.getenv("SUMMARY_FINAL_MAX_TOKENS", "1200"))
-SUMMARY_REPAIR_MAX_TOKENS = int(os.getenv("SUMMARY_REPAIR_MAX_TOKENS", "900"))
-SUMMARY_KEYPOINTS_MAX_TOKENS = int(os.getenv("SUMMARY_KEYPOINTS_MAX_TOKENS", "450"))
-SUMMARY_ENABLE_MODEL_REPAIR = env_bool("SUMMARY_ENABLE_MODEL_REPAIR", False)
-SUMMARY_ENABLE_KEYPOINTS_FALLBACK = env_bool("SUMMARY_ENABLE_KEYPOINTS_FALLBACK", False)
+SUMMARY_CHUNK_MAX_TOKENS = int(os.getenv("SUMMARY_CHUNK_MAX_TOKENS", "300"))
+SUMMARY_FINAL_MAX_TOKENS = int(os.getenv("SUMMARY_FINAL_MAX_TOKENS", "700"))
 
 
 
