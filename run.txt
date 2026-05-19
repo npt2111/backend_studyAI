@@ -32,3 +32,6 @@ RENDER
 - startCommand: gunicorn config.wsgi:application
 
  
+python worker.py --poll-interval 3 --batch-size 3
+
+python worker.py --poll-interval 3 --batch-size 1
