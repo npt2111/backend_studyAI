@@ -120,6 +120,37 @@ def update_user_profile(user_id: str, fields: Dict[str, Any]) -> Tuple[Dict[str,
     return response_payload, response_status
 
 
+def create_plan_task(
+    *,
+    user_id: str,
+    task_name: str,
+    subject: str,
+    task_date: str,
+    start_time: str,
+    end_time: str,
+    priority: str,
+) -> Tuple[Dict[str, Any], int]:
+    payload: Dict[str, Any] = {
+        "id_user": user_id,
+        "task_name": task_name,
+        "subject": subject,
+        "task_date": task_date,
+        "start_time": start_time,
+        "end_time": end_time,
+        "priority": priority,
+    }
+
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/plan_tasks",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
 def public_storage_url(*, bucket: str, object_path: str) -> str:
     base_url, _ = _settings()
     encoded_path = quote(object_path.lstrip("/"), safe="/")
