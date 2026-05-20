@@ -1,9 +1,12 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Dict
+from uuid import uuid4
 
 import jwt
 from django.conf import settings
 from jwt import ExpiredSignatureError, InvalidTokenError
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -12,7 +15,7 @@ from rest_framework.views import APIView
 from config.services import supabase_client
 from config.services.supabase_client import SupabaseConfigError
 
-from .serializers import LoginSerializer, RefreshTokenSerializer, RegisterSerializer
+from .serializers import LoginSerializer, RefreshTokenSerializer, RegisterSerializer, UpdateProfileSerializer
 
 
 def _extract_first_error(errors) -> str:
@@ -46,11 +49,42 @@ def _serializer_error_response(serializer, fallback_message: str = "Du lieu khon
 
 def _extract_profile(row: Dict) -> Dict:
     if not row:
-        return {"id": None, "email": None, "full_name": ""}
+        return {
+            "id": None,
+            "id_user": None,
+            "email": None,
+            "email_user": None,
+            "full_name": "",
+            "full_name_user": "",
+            "phone": "",
+            "phone_user": "",
+            "address": "",
+            "address_user": "",
+            "birthday": "",
+            "birthday_user": "",
+            "avatar_url": "",
+            "created_at": None,
+            "is_profile_complete": False,
+        }
+    phone = row.get("phone_user") or ""
+    address = row.get("address_user") or ""
+    birthday = row.get("birthday_user") or ""
     return {
         "id": row.get("id_user"),
+        "id_user": row.get("id_user"),
         "email": row.get("email_user"),
+        "email_user": row.get("email_user"),
         "full_name": row.get("full_name_user") or "",
+        "full_name_user": row.get("full_name_user") or "",
+        "phone": phone,
+        "phone_user": phone,
+        "address": address,
+        "address_user": address,
+        "birthday": birthday,
+        "birthday_user": birthday,
+        "avatar_url": row.get("avatar_url") or "",
+        "created_at": row.get("created_at"),
+        "is_profile_complete": bool(phone and address and birthday),
     }
 
 
@@ -332,6 +366,157 @@ class MeApiView(APIView):
             )
 
         return Response(_extract_profile(user_row), status=status.HTTP_200_OK)
+
+
+class UserProfileApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, user_id):
+        try:
+            user_row, error_response = _read_user_by_id(user_id)
+            if error_response:
+                return error_response
+        except SupabaseConfigError as exc:
+            return Response(
+                {"message": str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response(_extract_profile(user_row), status=status.HTTP_200_OK)
+
+    def patch(self, request, user_id):
+        serializer = UpdateProfileSerializer(data=request.data, partial=True)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Thong tin cap nhat khong hop le.")
+
+        data = serializer.validated_data
+        fields = {}
+        if "full_name" in data:
+            fields["full_name_user"] = data.get("full_name", "").strip()
+        if "email" in data:
+            fields["email_user"] = data.get("email", "").strip().lower()
+        if "phone" in data:
+            fields["phone_user"] = data.get("phone", "").strip() or None
+        if "address" in data:
+            fields["address_user"] = data.get("address", "").strip() or None
+        if "birthday" in data:
+            fields["birthday_user"] = data.get("birthday", "").strip() or None
+
+        if not fields:
+            user_row, error_response = _read_user_by_id(user_id)
+            if error_response:
+                return error_response
+            return Response(_extract_profile(user_row), status=status.HTTP_200_OK)
+
+        try:
+            updated_row, update_status = supabase_client.update_user_profile(user_id, fields)
+        except SupabaseConfigError as exc:
+            return Response(
+                {"message": str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        if _is_duplicate_email_error(updated_row):
+            return Response(
+                {
+                    "message": "Email da ton tai. Vui long dung email khac.",
+                    "errors": {"email": ["Email da ton tai. Vui long dung email khac."]},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if update_status >= 400:
+            return Response(
+                {"message": "Cap nhat ho so that bai.", "error": updated_row},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        if not updated_row:
+            updated_row, error_response = _read_user_by_id(user_id)
+            if error_response:
+                return error_response
+
+        return Response(_extract_profile(updated_row), status=status.HTTP_200_OK)
+
+
+class UserAvatarApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, user_id):
+        upload = request.FILES.get("file")
+        if not upload:
+            return Response({"message": "Thieu file anh."}, status=status.HTTP_400_BAD_REQUEST)
+
+        file_name = str(upload.name or "avatar.jpg")
+        ext = Path(file_name).suffix.lower()
+        allowed_exts = {".jpg", ".jpeg", ".png", ".webp"}
+        if ext not in allowed_exts:
+            return Response(
+                {"message": "Chi ho tro anh JPG, PNG hoac WEBP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        mime_type = upload.content_type or "application/octet-stream"
+        allowed_mimes = {"image/jpeg", "image/png", "image/webp"}
+        if mime_type not in allowed_mimes:
+            return Response(
+                {"message": "Dinh dang anh khong hop le."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if upload.size > 5 * 1024 * 1024:
+            return Response({"message": "Anh vuot qua 5MB."}, status=status.HTTP_400_BAD_REQUEST)
+
+        safe_ext = ".jpg" if ext == ".jpeg" else ext
+        storage_path = f"{user_id}/{uuid4().hex}{safe_ext}"
+        bucket = getattr(settings, "SUPABASE_AVATAR_BUCKET", "avatar")
+
+        try:
+            file_bytes = upload.read()
+            if not file_bytes:
+                return Response({"message": "Anh rong hoac khong doc duoc."}, status=status.HTTP_400_BAD_REQUEST)
+
+            storage_payload, storage_status = supabase_client.upload_storage_file(
+                bucket=bucket,
+                object_path=storage_path,
+                file_bytes=file_bytes,
+                content_type=mime_type,
+            )
+            if storage_status >= 400:
+                return Response(
+                    {"message": "Upload avatar len Storage that bai.", "error": storage_payload},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
+            avatar_url = supabase_client.public_storage_url(bucket=bucket, object_path=storage_path)
+            updated_row, update_status = supabase_client.update_user_profile(
+                str(user_id),
+                {"avatar_url": avatar_url},
+            )
+            if update_status >= 400:
+                return Response(
+                    {"message": "Luu avatar vao user that bai.", "error": updated_row},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
+            if not updated_row:
+                updated_row, error_response = _read_user_by_id(str(user_id))
+                if error_response:
+                    return error_response
+
+            return Response(
+                {
+                    "message": "Cap nhat avatar thanh cong.",
+                    "avatar_url": avatar_url,
+                    "user": _extract_profile(updated_row),
+                },
+                status=status.HTTP_200_OK,
+            )
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class RefreshTokenApiView(APIView):

@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import os
 import dj_database_url
 from dotenv import load_dotenv
@@ -143,6 +143,8 @@ CORS_ALLOWED_ORIGINS = [
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:1b")
 OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
+OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
+OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "4096"))
 
 # PDF reader settings: pdfplumber first, EasyOCR only for pages with weak text.
 PDFPLUMBER_TEXT_MIN_WORDS_PER_PAGE = int(os.getenv("PDFPLUMBER_TEXT_MIN_WORDS_PER_PAGE", "20"))
@@ -164,8 +166,10 @@ SUMMARY_WORKER_THREADS   = int(os.getenv("SUMMARY_WORKER_THREADS", "1"))
 # Keep heavy document processing out of the web process by default.
 # Set SUMMARY_USE_INLINE_WORKER=true only for quick local all-in-one testing.
 SUMMARY_USE_INLINE_WORKER = env_bool("SUMMARY_USE_INLINE_WORKER", False)
-SUMMARY_CHUNK_MAX_TOKENS = int(os.getenv("SUMMARY_CHUNK_MAX_TOKENS", "300"))
-SUMMARY_FINAL_MAX_TOKENS = int(os.getenv("SUMMARY_FINAL_MAX_TOKENS", "700"))
+SUMMARY_CHUNK_MAX_TOKENS = int(os.getenv("SUMMARY_CHUNK_MAX_TOKENS", "450"))
+SUMMARY_FINAL_MAX_TOKENS = int(os.getenv("SUMMARY_FINAL_MAX_TOKENS", "1000"))
+SUMMARY_LLM_INPUT_CHARS = int(os.getenv("SUMMARY_LLM_INPUT_CHARS", "14000"))
+SUMMARY_PRESELECT_SENTENCES = int(os.getenv("SUMMARY_PRESELECT_SENTENCES", "80"))
 
 
 
