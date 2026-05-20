@@ -105,6 +105,27 @@ def create_user(
     return response_payload, response_status
 
 
+def update_user_profile(user_id: str, fields: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(user_id, safe="")
+    payload = dict(fields)
+
+    response_payload, response_status = _request(
+        "PATCH",
+        f"/rest/v1/user?id_user=eq.{encoded}",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def public_storage_url(*, bucket: str, object_path: str) -> str:
+    base_url, _ = _settings()
+    encoded_path = quote(object_path.lstrip("/"), safe="/")
+    return f"{base_url}/storage/v1/object/public/{bucket}/{encoded_path}"
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
