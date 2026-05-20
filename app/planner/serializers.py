@@ -9,8 +9,13 @@ class PlanTaskSerializer(serializers.Serializer):
     start_time = serializers.TimeField()
     end_time = serializers.TimeField()
     priority = serializers.ChoiceField(choices=["low", "medium", "high"])
+    status = serializers.ChoiceField(choices=["pending", "done"], required=False, default="pending")
 
     def validate(self, attrs):
         if attrs["end_time"] <= attrs["start_time"]:
             raise serializers.ValidationError("Gio ket thuc phai sau gio bat dau.")
         return attrs
+
+
+class PlanTaskStatusSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["pending", "done"])

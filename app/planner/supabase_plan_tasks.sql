@@ -7,6 +7,7 @@ create table if not exists public.plan_tasks (
     start_time time not null,
     end_time time not null,
     priority text not null check (priority in ('low', 'medium', 'high')),
+    status varchar(20) not null default 'pending' check (status in ('pending', 'done')),
     created_at timestamptz not null default now()
 );
 
