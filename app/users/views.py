@@ -404,13 +404,13 @@ class UserProfileApiView(APIView):
             fields["birthday_user"] = data.get("birthday", "").strip() or None
 
         if not fields:
-            user_row, error_response = _read_user_by_id(user_id)
+            user_row, error_response = _read_user_by_id(str(user_id))
             if error_response:
                 return error_response
             return Response(_extract_profile(user_row), status=status.HTTP_200_OK)
 
         try:
-            updated_row, update_status = supabase_client.update_user_profile(user_id, fields)
+            updated_row, update_status = supabase_client.update_user_profile(str(user_id), fields)
         except SupabaseConfigError as exc:
             return Response(
                 {"message": str(exc)},
@@ -433,7 +433,7 @@ class UserProfileApiView(APIView):
             )
 
         if not updated_row:
-            updated_row, error_response = _read_user_by_id(user_id)
+            updated_row, error_response = _read_user_by_id(str(user_id))
             if error_response:
                 return error_response
 
