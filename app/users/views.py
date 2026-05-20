@@ -15,7 +15,7 @@ from rest_framework.views import APIView
 from config.services import supabase_client
 from config.services.supabase_client import SupabaseConfigError
 
-from .serializers import LoginSerializer, RefreshTokenSerializer, RegisterSerializer, UpdateProfileSerializer
+from .serializers import ChangePasswordSerializer, LoginSerializer, RefreshTokenSerializer, RegisterSerializer, UpdateProfileSerializer
 
 
 def _extract_first_error(errors) -> str:
@@ -517,6 +517,51 @@ class UserAvatarApiView(APIView):
             )
         except SupabaseConfigError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ChangePasswordApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def patch(self, request, user_id):
+        serializer = ChangePasswordSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Thong tin mat khau khong hop le.")
+
+        data = serializer.validated_data
+
+        try:
+            user_row, error_response = _read_user_by_id(str(user_id))
+            if error_response:
+                return error_response
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        stored_password = user_row.get("password_user") or ""
+        if stored_password != data["current_password"]:
+            return Response(
+                {
+                    "message": "Mat khau hien tai khong dung.",
+                    "errors": {"current_password": ["Mat khau hien tai khong dung."]},
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            updated_row, update_status = supabase_client.update_user_profile(
+                str(user_id),
+                {"password_user": data["new_password"]},
+            )
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if update_status >= 400:
+            return Response(
+                {"message": "Doi mat khau that bai.", "error": updated_row},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response({"message": "Doi mat khau thanh cong."}, status=status.HTTP_200_OK)
 
 
 class RefreshTokenApiView(APIView):
