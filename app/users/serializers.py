@@ -102,3 +102,37 @@ class UpdateProfileSerializer(serializers.Serializer):
         except serializers.ValidationError:
             raise serializers.ValidationError("Ngay sinh phai theo dinh dang YYYY-MM-DD.")
         return text
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    current_password = serializers.CharField(
+        error_messages={
+            "required": "Vui long nhap mat khau hien tai.",
+            "blank": "Vui long nhap mat khau hien tai.",
+        }
+    )
+    new_password = serializers.CharField(
+        min_length=6,
+        error_messages={
+            "required": "Vui long nhap mat khau moi.",
+            "blank": "Vui long nhap mat khau moi.",
+            "min_length": "Mat khau moi phai co it nhat 6 ky tu.",
+        },
+    )
+    confirm_password = serializers.CharField(
+        error_messages={
+            "required": "Vui long xac nhan mat khau moi.",
+            "blank": "Vui long xac nhan mat khau moi.",
+        }
+    )
+
+    def validate(self, attrs):
+        if attrs["current_password"] == attrs["new_password"]:
+            raise serializers.ValidationError(
+                {"new_password": ["Mat khau moi khong duoc trung mat khau hien tai."]}
+            )
+        if attrs["new_password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": ["Xac nhan mat khau khong trung khop."]}
+            )
+        return attrs
