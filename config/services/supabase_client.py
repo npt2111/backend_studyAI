@@ -129,6 +129,7 @@ def create_plan_task(
     start_time: str,
     end_time: str,
     priority: str,
+    status: str = "pending",
 ) -> Tuple[Dict[str, Any], int]:
     payload: Dict[str, Any] = {
         "id_user": user_id,
@@ -138,6 +139,7 @@ def create_plan_task(
         "start_time": start_time,
         "end_time": end_time,
         "priority": priority,
+        "status": status,
     }
 
     response_payload, response_status = _request(
@@ -148,6 +150,37 @@ def create_plan_task(
     )
     if isinstance(response_payload, list):
         return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def list_plan_tasks(
+    *,
+    user_id: str,
+    task_date: str = "",
+) -> Tuple[List[Dict[str, Any]], int]:
+    encoded_user = quote(user_id, safe="")
+    path = f"/rest/v1/plan_tasks?select=*&id_user=eq.{encoded_user}"
+    if task_date:
+        encoded_date = quote(task_date, safe="")
+        path += f"&task_date=eq.{encoded_date}"
+    path += "&order=start_time.asc"
+
+    response_payload, response_status = _request("GET", path)
+    if isinstance(response_payload, list):
+        return response_payload, response_status
+    return [], response_status
+
+
+def update_plan_task_status(task_id: str, status_value: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(task_id, safe="")
+    response_payload, response_status = _request(
+        "PATCH",
+        f"/rest/v1/plan_tasks?id_task=eq.{encoded}",
+        json={"status": status_value},
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else {}), response_status
     return response_payload, response_status
 
 

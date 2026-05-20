@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 from config.services import supabase_client
 from config.services.supabase_client import SupabaseConfigError
 
-from .serializers import PlanTaskSerializer
+from .serializers import PlanTaskSerializer, PlanTaskStatusSerializer
 
 
 def _extract_first_error(errors) -> str:
@@ -31,6 +31,31 @@ class PlanTaskApiView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
+    def get(self, request):
+        user_id = str(request.query_params.get("id_user", "")).strip()
+        task_date = str(request.query_params.get("task_date", "")).strip()
+        if not user_id:
+            return Response(
+                {"message": "Thieu id_user."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            tasks, list_status = supabase_client.list_plan_tasks(
+                user_id=user_id,
+                task_date=task_date,
+            )
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if list_status >= 400:
+            return Response(
+                {"message": "Lay danh sach nhiem vu that bai."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response({"tasks": tasks}, status=status.HTTP_200_OK)
+
     def post(self, request):
         serializer = PlanTaskSerializer(data=request.data)
         if not serializer.is_valid():
@@ -52,6 +77,7 @@ class PlanTaskApiView(APIView):
                 start_time=data["start_time"].strftime("%H:%M:%S"),
                 end_time=data["end_time"].strftime("%H:%M:%S"),
                 priority=data["priority"],
+                status=data.get("status", "pending"),
             )
         except SupabaseConfigError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -68,4 +94,42 @@ class PlanTaskApiView(APIView):
                 "task": created_task,
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class PlanTaskStatusApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def patch(self, request, task_id):
+        serializer = PlanTaskStatusSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "message": _extract_first_error(serializer.errors),
+                    "errors": serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            updated_task, update_status = supabase_client.update_plan_task_status(
+                str(task_id),
+                serializer.validated_data["status"],
+            )
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if update_status >= 400:
+            return Response(
+                {"message": "Cap nhat trang thai nhiem vu that bai.", "error": updated_task},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response(
+            {
+                "message": "Cap nhat trang thai nhiem vu thanh cong.",
+                "task": updated_task,
+            },
+            status=status.HTTP_200_OK,
         )
