@@ -374,7 +374,7 @@ class UserProfileApiView(APIView):
 
     def get(self, request, user_id):
         try:
-            user_row, error_response = _read_user_by_id(user_id)
+            user_row, error_response = _read_user_by_id(str(user_id))
             if error_response:
                 return error_response
         except SupabaseConfigError as exc:
