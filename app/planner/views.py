@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 from config.services import supabase_client
 from config.services.supabase_client import SupabaseConfigError
 
-from .serializers import PlanTaskSerializer, PlanTaskStatusSerializer
+from .serializers import PlanTaskSerializer, PlanTaskStatusSerializer, UpdatePlanTaskSerializer
 
 
 def _extract_first_error(errors) -> str:
@@ -130,6 +130,71 @@ class PlanTaskStatusApiView(APIView):
             {
                 "message": "Cap nhat trang thai nhiem vu thanh cong.",
                 "task": updated_task,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class PlanTaskDetailApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def patch(self, request, task_id):
+        serializer = UpdatePlanTaskSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "message": _extract_first_error(serializer.errors),
+                    "errors": serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = serializer.validated_data
+        fields = {
+            "task_name": data["task_name"].strip(),
+            "subject": data.get("subject", "").strip(),
+            "task_date": str(data["task_date"]),
+            "start_time": data["start_time"].strftime("%H:%M:%S"),
+            "end_time": data["end_time"].strftime("%H:%M:%S"),
+            "priority": data["priority"],
+        }
+
+        try:
+            updated_task, update_status = supabase_client.update_plan_task(str(task_id), fields)
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if update_status >= 400:
+            return Response(
+                {"message": "Cap nhat nhiem vu that bai.", "error": updated_task},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response(
+            {
+                "message": "Cap nhat nhiem vu thanh cong.",
+                "task": updated_task,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, task_id):
+        try:
+            deleted_task, delete_status = supabase_client.delete_plan_task(str(task_id))
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if delete_status >= 400:
+            return Response(
+                {"message": "Xoa nhiem vu that bai.", "error": deleted_task},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response(
+            {
+                "message": "Xoa nhiem vu thanh cong.",
+                "task": deleted_task,
             },
             status=status.HTTP_200_OK,
         )
