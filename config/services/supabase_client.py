@@ -375,6 +375,18 @@ def update_document_read_result(read_id: str, fields: Dict[str, Any]) -> Tuple[D
     return response_payload, response_status
 
 
+def delete_document_read_result(read_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(read_id, safe="")
+    response_payload, response_status = _request(
+        "DELETE",
+        f"/rest/v1/document_read_results?id_read=eq.{encoded}",
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else {}), response_status
+    return response_payload, response_status
+
+
 def get_summary_job(job_id: str) -> Tuple[Dict[str, Any], int]:
     encoded = quote(job_id, safe="")
     return _select_one(f"/rest/v1/ai_summary_jobs?select=*&id_job=eq.{encoded}&limit=1")

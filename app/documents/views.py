@@ -199,6 +199,37 @@ class DocumentReadResultDetailApiView(APIView):
         except SupabaseConfigError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    def delete(self, request, read_id):
+        query = JobQuerySerializer(data=request.query_params)
+        if not query.is_valid():
+            return _serializer_error_response(query, "Query param khong hop le.")
+
+        user_id = str(query.validated_data["user_id"])
+
+        try:
+            row, row_status = supabase_client.get_document_read_result(str(read_id))
+            if row_status >= 400:
+                return Response({"message": "Khong doc duoc ket qua doc file."}, status=status.HTTP_502_BAD_GATEWAY)
+            if not row:
+                return Response({"message": "Khong tim thay ket qua doc file."}, status=status.HTTP_404_NOT_FOUND)
+            if str(row.get("id_user")) != user_id:
+                return Response({"message": "Ban khong co quyen xoa ket qua nay."}, status=status.HTTP_403_FORBIDDEN)
+
+            deleted_row, deleted_status = supabase_client.delete_document_read_result(str(read_id))
+            if deleted_status >= 400:
+                return Response({"message": "Xoa document that bai.", "error": deleted_row}, status=status.HTTP_502_BAD_GATEWAY)
+
+            return Response(
+                {
+                    "message": "Da xoa document.",
+                    "read_result": normalize_read_result(deleted_row or row),
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class DocumentReadResultListApiView(APIView):
     permission_classes = [AllowAny]
