@@ -449,3 +449,129 @@ def claim_summary_job(job_id: str) -> Tuple[Dict[str, Any], int]:
     if isinstance(response_payload, list):
         return (response_payload[0] if response_payload else {}), response_status
     return response_payload, response_status
+
+
+def create_quiz_generation(
+    *,
+    user_id: str,
+    read_id: str,
+    file_name: str,
+    quiz_type: str,
+    difficulty: str,
+    question_count: int,
+) -> Tuple[Dict[str, Any], int]:
+    payload: Dict[str, Any] = {
+        "id_user": user_id,
+        "id_read": read_id,
+        "file_name": file_name,
+        "quiz_type": quiz_type,
+        "difficulty": difficulty,
+        "question_count": question_count,
+        "status": "processing",
+        "questions": [],
+        "updated_at": _now_iso(),
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/quiz_generations",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def update_quiz_generation(quiz_id: str, fields: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(quiz_id, safe="")
+    payload = dict(fields)
+    payload["updated_at"] = _now_iso()
+    response_payload, response_status = _request(
+        "PATCH",
+        f"/rest/v1/quiz_generations?id_quiz=eq.{encoded}",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def get_quiz_generation(quiz_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(quiz_id, safe="")
+    return _select_one(f"/rest/v1/quiz_generations?select=*&id_quiz=eq.{encoded}&limit=1")
+
+
+def list_quiz_generations(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[str, Any]], int]:
+    safe_limit = max(1, min(limit, 100))
+    encoded_user = quote(user_id, safe="")
+    payload, status_code = _request(
+        "GET",
+        f"/rest/v1/quiz_generations?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={safe_limit}",
+    )
+    if isinstance(payload, list):
+        return payload, 200
+    return [], status_code
+
+
+def create_quiz_attempt(
+    *,
+    user_id: str,
+    quiz_id: str,
+    read_id: str,
+    total_questions: int,
+) -> Tuple[Dict[str, Any], int]:
+    payload: Dict[str, Any] = {
+        "id_user": user_id,
+        "id_quiz": quiz_id,
+        "id_read": read_id or None,
+        "status": "in_progress",
+        "answers": [],
+        "correct_count": 0,
+        "wrong_count": 0,
+        "total_questions": total_questions,
+        "completion_percent": 0,
+        "elapsed_seconds": 0,
+        "updated_at": _now_iso(),
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/quiz_attempts",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def get_quiz_attempt(attempt_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(attempt_id, safe="")
+    return _select_one(f"/rest/v1/quiz_attempts?select=*&id_attempt=eq.{encoded}&limit=1")
+
+
+def update_quiz_attempt(attempt_id: str, fields: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(attempt_id, safe="")
+    payload = dict(fields)
+    payload["updated_at"] = _now_iso()
+    response_payload, response_status = _request(
+        "PATCH",
+        f"/rest/v1/quiz_attempts?id_attempt=eq.{encoded}",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def delete_quiz_attempt(attempt_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(attempt_id, safe="")
+    response_payload, response_status = _request(
+        "DELETE",
+        f"/rest/v1/quiz_attempts?id_attempt=eq.{encoded}",
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else {}), response_status
+    return response_payload, response_status
