@@ -173,10 +173,9 @@ SUMMARY_LLM_INPUT_CHARS = int(os.getenv("SUMMARY_LLM_INPUT_CHARS", "8000"))
 SUMMARY_PRESELECT_SENTENCES = int(os.getenv("SUMMARY_PRESELECT_SENTENCES", "40"))
 
 # Groq quiz generation
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").rstrip("/")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").strip().rstrip("/")
 GROQ_TIMEOUT_SECONDS = int(os.getenv("GROQ_TIMEOUT_SECONDS", "120"))
 QUIZ_SOURCE_MAX_CHARS = int(os.getenv("QUIZ_SOURCE_MAX_CHARS", "16000"))
-
 
