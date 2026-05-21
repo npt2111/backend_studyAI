@@ -305,6 +305,76 @@ def create_summary_job(
     return response_payload, response_status
 
 
+def create_document_read_result(
+    *,
+    user_id: str,
+    file_name: str,
+    storage_path: str,
+    mime_type: str,
+) -> Tuple[Dict[str, Any], int]:
+    payload: Dict[str, Any] = {
+        "id_user": user_id,
+        "file_name": file_name,
+        "storage_path": storage_path,
+        "mime_type": mime_type,
+        "status": "processing",
+        "source_word_count": 0,
+        "updated_at": _now_iso(),
+    }
+
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/document_read_results",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def get_document_read_result(read_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(read_id, safe="")
+    return _select_one(f"/rest/v1/document_read_results?select=*&id_read=eq.{encoded}&limit=1")
+
+
+def get_document_read_result_by_storage_path(storage_path: str, user_id: str = "") -> Tuple[Dict[str, Any], int]:
+    encoded_path = quote(storage_path, safe="")
+    path = f"/rest/v1/document_read_results?select=*&storage_path=eq.{encoded_path}"
+    if user_id:
+        encoded_user = quote(user_id, safe="")
+        path += f"&id_user=eq.{encoded_user}"
+    path += "&order=created_at.desc&limit=1"
+    return _select_one(path)
+
+
+def list_document_read_results(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[str, Any]], int]:
+    safe_limit = max(1, min(limit, 100))
+    encoded_user = quote(user_id, safe="")
+    payload, status_code = _request(
+        "GET",
+        f"/rest/v1/document_read_results?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={safe_limit}",
+    )
+    if isinstance(payload, list):
+        return payload, 200
+    return [], status_code
+
+
+def update_document_read_result(read_id: str, fields: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(read_id, safe="")
+    payload = dict(fields)
+    payload["updated_at"] = _now_iso()
+    response_payload, response_status = _request(
+        "PATCH",
+        f"/rest/v1/document_read_results?id_read=eq.{encoded}",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
 def get_summary_job(job_id: str) -> Tuple[Dict[str, Any], int]:
     encoded = quote(job_id, safe="")
     return _select_one(f"/rest/v1/ai_summary_jobs?select=*&id_job=eq.{encoded}&limit=1")
