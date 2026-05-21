@@ -12,15 +12,16 @@ from rest_framework.views import APIView
 from config.services import supabase_client
 from config.services.supabase_client import SupabaseConfigError
 
-from .background import submit_summary_job
 from .serializers import JobListQuerySerializer, JobQuerySerializer, UploadDocumentSerializer
-from .services import _validate_document_file, normalize_job, now_iso
+from .services import (
+    _extract_docx_markdown,
+    _extract_pdf_markdown,
+    _validate_document_file,
+    _validate_readable_text,
+    normalize_read_result,
+)
 
 ALLOWED_EXTS = {".pdf", ".docx"}
-
-
-def _maybe_start_inline_summary_job(job_id: str) -> bool:
-    return submit_summary_job(str(job_id))
 
 
 def _extract_first_error(errors) -> str:
@@ -102,34 +103,67 @@ class UploadDocumentApiView(APIView):
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
 
-            job_row, job_status = supabase_client.create_summary_job(
+            read_row, read_status = supabase_client.create_document_read_result(
                 user_id=user_id,
                 file_name=file_name,
                 storage_path=storage_path,
                 mime_type=mime_type,
             )
-            if job_status >= 400:
+            if read_status >= 400:
                 return Response(
-                    {"message": "Tao summary job that bai.", "error": job_row},
+                    {"message": "Tao ket qua doc file that bai.", "error": read_row},
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
 
-            job_id = str(job_row.get("id_job", "")).strip()
-            if not job_id:
+            read_id = str(read_row.get("id_read", "")).strip()
+            if not read_id:
                 return Response(
-                    {"message": "Da tao job nhung thieu id_job."},
+                    {"message": "Da tao ket qua doc file nhung thieu id_read."},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
 
-            worker_started = _maybe_start_inline_summary_job(job_id)
+            try:
+                if ext == ".pdf":
+                    extracted_text = _extract_pdf_markdown(file_bytes)
+                else:
+                    extracted_text = _extract_docx_markdown(file_bytes)
+                _validate_readable_text(extracted_text)
+                read_row, read_status = supabase_client.update_document_read_result(
+                    read_id,
+                    {
+                        "status": "done",
+                        "extracted_text": extracted_text,
+                        "source_word_count": len(extracted_text.split()),
+                        "error_message": None,
+                    },
+                )
+                if read_status >= 400:
+                    return Response(
+                        {"message": "Luu ket qua doc file that bai.", "error": read_row},
+                        status=status.HTTP_502_BAD_GATEWAY,
+                    )
+            except Exception as exc:
+                failed_row, _ = supabase_client.update_document_read_result(
+                    read_id,
+                    {
+                        "status": "failed",
+                        "error_message": str(exc)[:1000] if str(exc) else "Khong ro loi.",
+                    },
+                )
+                return Response(
+                    {
+                        "message": str(exc) if str(exc) else "Khong doc duoc noi dung file.",
+                        "read_result": normalize_read_result(failed_row or read_row),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
             return Response(
                 {
-                    "message": "Upload thanh cong, da tao job cho worker xu ly.",
-                    "job": normalize_job(job_row),
-                    "worker_started": worker_started,
+                    "message": "Upload thanh cong, da doc noi dung file.",
+                    "read_result": normalize_read_result(read_row),
                 },
-                status=status.HTTP_202_ACCEPTED,
+                status=status.HTTP_201_CREATED,
             )
 
         except SupabaseConfigError as exc:
@@ -140,11 +174,11 @@ class UploadDocumentApiView(APIView):
             return Response({"message": f"Upload that bai: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-class SummaryJobDetailApiView(APIView):
+class DocumentReadResultDetailApiView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
-    def get(self, request, job_id):
+    def get(self, request, read_id):
         query = JobQuerySerializer(data=request.query_params)
         if not query.is_valid():
             return _serializer_error_response(query, "Query param khong hop le.")
@@ -152,25 +186,21 @@ class SummaryJobDetailApiView(APIView):
         user_id = str(query.validated_data["user_id"])
 
         try:
-            row, row_status = supabase_client.get_summary_job(str(job_id))
+            row, row_status = supabase_client.get_document_read_result(str(read_id))
             if row_status >= 400:
-                return Response({"message": "Khong doc duoc summary job."}, status=status.HTTP_502_BAD_GATEWAY)
+                return Response({"message": "Khong doc duoc ket qua doc file."}, status=status.HTTP_502_BAD_GATEWAY)
             if not row:
-                return Response({"message": "Khong tim thay summary job."}, status=status.HTTP_404_NOT_FOUND)
-
+                return Response({"message": "Khong tim thay ket qua doc file."}, status=status.HTTP_404_NOT_FOUND)
             if str(row.get("id_user")) != user_id:
-                return Response({"message": "Ban khong co quyen xem job nay."}, status=status.HTTP_403_FORBIDDEN)
+                return Response({"message": "Ban khong co quyen xem ket qua nay."}, status=status.HTTP_403_FORBIDDEN)
 
-            if str(row.get("status", "")).lower() == "queued":
-                _maybe_start_inline_summary_job(str(row.get("id_job")))
-
-            return Response({"job": normalize_job(row)}, status=status.HTTP_200_OK)
+            return Response({"read_result": normalize_read_result(row)}, status=status.HTTP_200_OK)
 
         except SupabaseConfigError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-class SummaryJobListApiView(APIView):
+class DocumentReadResultListApiView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
@@ -183,70 +213,11 @@ class SummaryJobListApiView(APIView):
         limit = int(serializer.validated_data["limit"])
 
         try:
-            rows, rows_status = supabase_client.list_summary_jobs(user_id=user_id, limit=limit)
+            rows, rows_status = supabase_client.list_document_read_results(user_id=user_id, limit=limit)
             if rows_status >= 400:
-                return Response({"message": "Khong lay duoc danh sach jobs."}, status=status.HTTP_502_BAD_GATEWAY)
+                return Response({"message": "Khong lay duoc danh sach ket qua doc file."}, status=status.HTTP_502_BAD_GATEWAY)
 
-            for row in rows:
-                if str(row.get("status", "")).lower() == "queued":
-                    _maybe_start_inline_summary_job(str(row.get("id_job")))
-
-            return Response({"jobs": [normalize_job(r) for r in rows]}, status=status.HTTP_200_OK)
-
-        except SupabaseConfigError as exc:
-            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-class RetrySummaryJobApiView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
-
-    def post(self, request, job_id):
-        serializer = JobQuerySerializer(data=request.data)
-        if not serializer.is_valid():
-            return _serializer_error_response(serializer, "user_id khong hop le.")
-
-        user_id = str(serializer.validated_data["user_id"])
-
-        try:
-            row, row_status = supabase_client.get_summary_job(str(job_id))
-            if row_status >= 400:
-                return Response({"message": "Khong doc duoc summary job."}, status=status.HTTP_502_BAD_GATEWAY)
-            if not row:
-                return Response({"message": "Khong tim thay summary job."}, status=status.HTTP_404_NOT_FOUND)
-
-            if str(row.get("id_user")) != user_id:
-                return Response({"message": "Ban khong co quyen retry job nay."}, status=status.HTTP_403_FORBIDDEN)
-
-            if str(row.get("status", "")).lower() == "processing":
-                return Response({"message": "Job dang duoc xu ly."}, status=status.HTTP_409_CONFLICT)
-
-            updated_row, updated_status = supabase_client.update_summary_job(
-                str(job_id),
-                {
-                    "status": "queued",
-                    "progress": 0,
-                    "summary_text": None,
-                    "summary_json": None,
-                    "key_points": [],
-                    "error_message": None,
-                    "started_at": None,
-                    "finished_at": None,
-                    "updated_at": now_iso(),
-                },
-            )
-            if updated_status >= 400:
-                return Response({"message": "Khong retry duoc job."}, status=status.HTTP_502_BAD_GATEWAY)
-
-            worker_started = _maybe_start_inline_summary_job(str(job_id))
-            return Response(
-                {
-                    "message": "Da retry job.",
-                    "job": normalize_job(updated_row),
-                    "worker_started": worker_started,
-                },
-                status=status.HTTP_202_ACCEPTED,
-            )
+            return Response({"read_results": [normalize_read_result(r) for r in rows]}, status=status.HTTP_200_OK)
 
         except SupabaseConfigError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

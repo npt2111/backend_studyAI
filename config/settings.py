@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import os
 import dj_database_url
 from dotenv import load_dotenv
@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     'app.planner',
     'app.analytics',
     'app.documents',
+    'app.summarize'
 ]
 
 MIDDLEWARE = [
@@ -161,15 +162,15 @@ SUPABASE_STORAGE_BUCKET  = os.getenv("SUPABASE_STORAGE_BUCKET", "study-documents
 
 # Summary pipeline
 SUMMARY_MAX_FILE_MB      = int(os.getenv("SUMMARY_MAX_FILE_MB", "20"))
-SUMMARY_CHUNK_CHARS      = int(os.getenv("SUMMARY_CHUNK_CHARS", "2500"))
+SUMMARY_CHUNK_CHARS      = int(os.getenv("SUMMARY_CHUNK_CHARS", "1800"))
 SUMMARY_WORKER_THREADS   = int(os.getenv("SUMMARY_WORKER_THREADS", "1"))
 # Keep heavy document processing out of the web process by default.
 # Set SUMMARY_USE_INLINE_WORKER=true only for quick local all-in-one testing.
 SUMMARY_USE_INLINE_WORKER = env_bool("SUMMARY_USE_INLINE_WORKER", False)
-SUMMARY_CHUNK_MAX_TOKENS = int(os.getenv("SUMMARY_CHUNK_MAX_TOKENS", "450"))
-SUMMARY_FINAL_MAX_TOKENS = int(os.getenv("SUMMARY_FINAL_MAX_TOKENS", "1000"))
-SUMMARY_LLM_INPUT_CHARS = int(os.getenv("SUMMARY_LLM_INPUT_CHARS", "14000"))
-SUMMARY_PRESELECT_SENTENCES = int(os.getenv("SUMMARY_PRESELECT_SENTENCES", "80"))
+SUMMARY_CHUNK_MAX_TOKENS = int(os.getenv("SUMMARY_CHUNK_MAX_TOKENS", "300"))
+SUMMARY_FINAL_MAX_TOKENS = int(os.getenv("SUMMARY_FINAL_MAX_TOKENS", "600"))
+SUMMARY_LLM_INPUT_CHARS = int(os.getenv("SUMMARY_LLM_INPUT_CHARS", "8000"))
+SUMMARY_PRESELECT_SENTENCES = int(os.getenv("SUMMARY_PRESELECT_SENTENCES", "40"))
 
 
 

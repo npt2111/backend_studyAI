@@ -3,7 +3,7 @@ import time
 
 from django.core.management.base import BaseCommand
 
-from app.documents.services import process_summary_job
+from app.summarize.services import process_summary_job
 from config.services import supabase_client
 
 logger = logging.getLogger(__name__)

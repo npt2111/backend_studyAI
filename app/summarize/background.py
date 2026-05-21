@@ -1,6 +1,7 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
+
 from django.conf import settings
 
 _MAX_WORKERS = max(1, int(os.getenv("SUMMARY_WORKER_THREADS", "2")))
