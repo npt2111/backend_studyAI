@@ -183,6 +183,12 @@ Tai lieu:
     )
     if len(questions) != question_count:
         raise RuntimeError(f"Groq tao {len(questions)}/{question_count} cau hoi hop le.")
+    if quiz_type == "true_false":
+        answer_keys = {str(item.get("correct_answer") or "").upper() for item in questions}
+        min_false_count = max(1, question_count // 3)
+        false_count = sum(1 for item in questions if str(item.get("correct_answer") or "").upper() == "B")
+        if answer_keys != {"A", "B"} or false_count < min_false_count:
+            raise RuntimeError("Groq tao quiz Dung/Sai bi lech: phai co ca dap an Dung va Sai.")
     return {
         "questions": questions,
         "raw_response": content,
@@ -197,7 +203,11 @@ Tra ve dung schema:
 questions co dung {question_count} phan tu.
 True/False chi co 2 dap an co dinh: A = "Đúng", B = "Sai".
 Truong "question" bat buoc la mot menh de khang dinh co the danh gia Dung/Sai, khong phai cau hoi mo, khong phai cau hoi co 4 lua chon.
-Moi menh de phai dua truc tiep tren tai lieu. Dap an "Sai" chi duoc tao bang cach doi mot chi tiet trong tai lieu mot cach ro rang va khong gay mo ho.
+Phai co ca menh de dung va menh de sai. Khong duoc de tat ca correct_answer la "A".
+Ty le dap an nen gan 50/50: voi {question_count} cau, it nhat {max(1, question_count // 3)} cau phai co correct_answer = "B".
+Menh de dung: viet lai mot thong tin dung trong tai lieu, correct_answer = "A".
+Menh de sai: sua doi mot chi tiet quan trong trong tai lieu de menh de tro thanh sai ro rang, correct_answer = "B".
+Moi menh de phai dua truc tiep tren tai lieu; khi tao menh de sai, chi duoc doi mot chi tiet co trong tai lieu mot cach ro rang va khong gay mo ho.
 Khong lap lai menh de, khong lap lai cung mot y bang cach doi tu ngu nhe.
 Khong bia dat kien thuc ngoai tai lieu.
 """.strip()
