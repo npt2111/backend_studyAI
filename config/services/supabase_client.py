@@ -674,3 +674,49 @@ def update_flashcard_attempt(attempt_id: str, fields: Dict[str, Any]) -> Tuple[D
     if isinstance(response_payload, list):
         return (response_payload[0] if response_payload else payload), response_status
     return response_payload, response_status
+
+
+def get_mindmap_by_read_id(read_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(read_id, safe="")
+    return _select_one(f"/rest/v1/mindmaps?select=*&id_read=eq.{encoded}&limit=1")
+
+
+def create_mindmap(
+    *,
+    user_id: str,
+    read_id: str,
+    file_name: str,
+) -> Tuple[Dict[str, Any], int]:
+    payload: Dict[str, Any] = {
+        "id_user": user_id,
+        "id_read": read_id,
+        "file_name": file_name,
+        "status": "processing",
+        "mindmap_json": {},
+        "markdown": None,
+        "updated_at": _now_iso(),
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/mindmaps",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def update_mindmap(mindmap_id: str, fields: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(mindmap_id, safe="")
+    payload = dict(fields)
+    payload["updated_at"] = _now_iso()
+    response_payload, response_status = _request(
+        "PATCH",
+        f"/rest/v1/mindmaps?id_mindmap=eq.{encoded}",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
