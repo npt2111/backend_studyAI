@@ -135,8 +135,8 @@ Yeu cau:
 - Moi cau co explanation ngan gon giai thich vi sao dap an dung.
 - correct_answer phai la key dap an dung.
 - Noi dung cau hoi va explanation viet bang tieng Viet.
-- Dap an khong duoc trung lap.
-- Neu tai lieu khong du thong tin, van tao cau hoi o muc tong quat dua tren noi dung co trong tai lieu.
+- Khong duoc lap lai y/cau hoi; moi cau phai kiem tra mot y khac nhau trong tai lieu.
+- Khong duoc bia dat thong tin ngoai tai lieu. Neu tai lieu khong du thong tin de tao du so cau hop le, hay tao cac cau o muc tong quat nhung van phai dua tren noi dung co trong tai lieu.
 
 Tai lieu:
 {source}
@@ -193,15 +193,21 @@ def _schema_instruction(*, quiz_type: str, question_count: int) -> str:
     if quiz_type == "true_false":
         return f"""
 Tra ve dung schema:
-{{"questions":[{{"question":"...","options":[{{"key":"A","text":"Đúng"}},{{"key":"B","text":"Sai"}}],"correct_answer":"A","explanation":"..."}}]}}
+{{"questions":[{{"question":"Ti the la noi dien ra qua trinh ho hap te bao.","options":[{{"key":"A","text":"Đúng"}},{{"key":"B","text":"Sai"}}],"correct_answer":"A","explanation":"Theo tai lieu, ti the tham gia tao nang luong qua ho hap te bao."}}]}}
 questions co dung {question_count} phan tu.
-True/False chi co 2 dap an: A = "Đúng", B = "Sai".
+True/False chi co 2 dap an co dinh: A = "Đúng", B = "Sai".
+Truong "question" bat buoc la mot menh de khang dinh co the danh gia Dung/Sai, khong phai cau hoi mo, khong phai cau hoi co 4 lua chon.
+Moi menh de phai dua truc tiep tren tai lieu. Dap an "Sai" chi duoc tao bang cach doi mot chi tiet trong tai lieu mot cach ro rang va khong gay mo ho.
+Khong lap lai menh de, khong lap lai cung mot y bang cach doi tu ngu nhe.
+Khong bia dat kien thuc ngoai tai lieu.
 """.strip()
     return f"""
 Tra ve dung schema:
 {{"questions":[{{"question":"...","options":[{{"key":"A","text":"..."}},{{"key":"B","text":"..."}},{{"key":"C","text":"..."}},{{"key":"D","text":"..."}}],"correct_answer":"A","explanation":"..."}}]}}
 questions co dung {question_count} phan tu.
 Multiple choice bat buoc co 4 dap an A, B, C, D va chi 1 dap an dung.
+Dap an khong duoc trung lap.
+Khong lap lai cau hoi, khong bia dat thong tin ngoai tai lieu.
 """.strip()
 
 
