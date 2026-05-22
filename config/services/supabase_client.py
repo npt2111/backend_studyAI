@@ -575,3 +575,102 @@ def delete_quiz_attempt(attempt_id: str) -> Tuple[Dict[str, Any], int]:
     if isinstance(response_payload, list):
         return (response_payload[0] if response_payload else {}), response_status
     return response_payload, response_status
+
+
+def create_flashcard_generation(
+    *,
+    user_id: str,
+    read_id: str,
+    file_name: str,
+    difficulty: str,
+    card_count: int,
+) -> Tuple[Dict[str, Any], int]:
+    payload: Dict[str, Any] = {
+        "id_user": user_id,
+        "id_read": read_id,
+        "file_name": file_name,
+        "difficulty": difficulty,
+        "card_count": card_count,
+        "status": "processing",
+        "cards": [],
+        "updated_at": _now_iso(),
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/flashcard_generations",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def update_flashcard_generation(flashcard_id: str, fields: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(flashcard_id, safe="")
+    payload = dict(fields)
+    payload["updated_at"] = _now_iso()
+    response_payload, response_status = _request(
+        "PATCH",
+        f"/rest/v1/flashcard_generations?id_flashcard=eq.{encoded}",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def get_flashcard_generation(flashcard_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(flashcard_id, safe="")
+    return _select_one(f"/rest/v1/flashcard_generations?select=*&id_flashcard=eq.{encoded}&limit=1")
+
+
+def create_flashcard_attempt(
+    *,
+    user_id: str,
+    flashcard_id: str,
+    read_id: str,
+    total_cards: int,
+) -> Tuple[Dict[str, Any], int]:
+    payload: Dict[str, Any] = {
+        "id_user": user_id,
+        "id_flashcard": flashcard_id,
+        "id_read": read_id or None,
+        "status": "in_progress",
+        "viewed_count": 1 if total_cards > 0 else 0,
+        "total_cards": total_cards,
+        "current_index": 0,
+        "completion_percent": round((1 / max(total_cards, 1)) * 100, 2) if total_cards > 0 else 0,
+        "elapsed_seconds": 0,
+        "updated_at": _now_iso(),
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/flashcard_attempts",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def get_flashcard_attempt(attempt_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(attempt_id, safe="")
+    return _select_one(f"/rest/v1/flashcard_attempts?select=*&id_attempt=eq.{encoded}&limit=1")
+
+
+def update_flashcard_attempt(attempt_id: str, fields: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(attempt_id, safe="")
+    payload = dict(fields)
+    payload["updated_at"] = _now_iso()
+    response_payload, response_status = _request(
+        "PATCH",
+        f"/rest/v1/flashcard_attempts?id_attempt=eq.{encoded}",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
