@@ -628,3 +628,90 @@ def update_mindmap(mindmap_id: str, fields: Dict[str, Any]) -> Tuple[Dict[str, A
     if isinstance(response_payload, list):
         return (response_payload[0] if response_payload else payload), response_status
     return response_payload, response_status
+
+
+def get_document_chat_session_by_read(*, user_id: str, read_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded_user = quote(user_id, safe="")
+    encoded_read = quote(read_id, safe="")
+    return _select_one(
+        f"/rest/v1/document_chat_sessions?select=*&id_user=eq.{encoded_user}&id_read=eq.{encoded_read}&order=updated_at.desc&limit=1"
+    )
+
+
+def get_document_chat_session(session_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(session_id, safe="")
+    return _select_one(f"/rest/v1/document_chat_sessions?select=*&id_chat_session=eq.{encoded}&limit=1")
+
+
+def create_document_chat_session(
+    *,
+    user_id: str,
+    read_id: str,
+    file_name: str,
+) -> Tuple[Dict[str, Any], int]:
+    payload: Dict[str, Any] = {
+        "id_user": user_id,
+        "id_read": read_id,
+        "file_name": file_name,
+        "updated_at": _now_iso(),
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/document_chat_sessions",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def touch_document_chat_session(session_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(session_id, safe="")
+    response_payload, response_status = _request(
+        "PATCH",
+        f"/rest/v1/document_chat_sessions?id_chat_session=eq.{encoded}",
+        json={"updated_at": _now_iso()},
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else {}), response_status
+    return response_payload, response_status
+
+
+def list_document_chat_messages(*, session_id: str, limit: int = 100) -> Tuple[List[Dict[str, Any]], int]:
+    safe_limit = max(1, min(limit, 200))
+    encoded = quote(session_id, safe="")
+    payload, status_code = _request(
+        "GET",
+        f"/rest/v1/document_chat_messages?select=*&id_chat_session=eq.{encoded}&order=created_at.asc&limit={safe_limit}",
+    )
+    if isinstance(payload, list):
+        return payload, 200
+    return [], status_code
+
+
+def create_document_chat_message(
+    *,
+    session_id: str,
+    user_id: str,
+    read_id: str,
+    role: str,
+    content: str,
+) -> Tuple[Dict[str, Any], int]:
+    payload: Dict[str, Any] = {
+        "id_chat_session": session_id,
+        "id_user": user_id,
+        "id_read": read_id,
+        "role": role,
+        "content": content,
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/document_chat_messages",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
