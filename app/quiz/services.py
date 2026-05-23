@@ -94,7 +94,7 @@ def merge_attempt_answer(existing_answers: Any, answer: Dict[str, Any]) -> List[
     return sorted(merged, key=lambda item: int(item.get("question_index", 0)))
 
 
-def summarize_attempt_answers(answers: List[Dict[str, Any]], total_questions: int) -> Dict[str, Any]:
+def calculate_attempt_stats(answers: List[Dict[str, Any]], total_questions: int) -> Dict[str, Any]:
     correct = sum(1 for item in answers if isinstance(item, dict) and bool(item.get("is_correct")))
     answered = len([item for item in answers if isinstance(item, dict)])
     wrong = max(0, answered - correct)

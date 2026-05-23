@@ -17,11 +17,11 @@ from .serializers import (
 )
 from .services import (
     build_attempt_answer,
+    calculate_attempt_stats,
     generate_quiz_questions,
     merge_attempt_answer,
     normalize_attempt,
     normalize_quiz,
-    summarize_attempt_answers,
 )
 
 
@@ -253,13 +253,13 @@ class SubmitQuizAnswerApiView(APIView):
             )
             answers = merge_attempt_answer(attempt_row.get("answers"), answer)
             total = int(attempt_row.get("total_questions") or len(quiz_row.get("questions") or []))
-            summary = summarize_attempt_answers(answers, total)
+            attempt_stats = calculate_attempt_stats(answers, total)
             updated_row, update_status = supabase_client.update_quiz_attempt(
                 str(attempt_id),
                 {
                     "answers": answers,
                     "elapsed_seconds": elapsed_seconds,
-                    **summary,
+                    **attempt_stats,
                 },
             )
             if update_status >= 400:
@@ -293,14 +293,14 @@ class FinishQuizAttemptApiView(APIView):
 
             answers = attempt_row.get("answers") if isinstance(attempt_row.get("answers"), list) else []
             total = int(attempt_row.get("total_questions") or 0)
-            summary = summarize_attempt_answers(answers, total)
+            attempt_stats = calculate_attempt_stats(answers, total)
             updated_row, update_status = supabase_client.update_quiz_attempt(
                 str(attempt_id),
                 {
                     "status": "completed",
                     "elapsed_seconds": elapsed_seconds,
                     "finished_at": supabase_client._now_iso(),
-                    **summary,
+                    **attempt_stats,
                 },
             )
             if update_status >= 400:

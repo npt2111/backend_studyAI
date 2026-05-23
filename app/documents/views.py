@@ -73,7 +73,7 @@ class UploadDocumentApiView(APIView):
         if ext not in ALLOWED_EXTS:
             return Response({"message": "Chi ho tro PDF va DOCX."}, status=status.HTTP_400_BAD_REQUEST)
 
-        max_mb = int(getattr(settings, "SUMMARY_MAX_FILE_MB", 20))
+        max_mb = int(getattr(settings, "DOCUMENT_MAX_FILE_MB", 20))
         if upload.size > max_mb * 1024 * 1024:
             return Response({"message": f"File vuot qua {max_mb}MB."}, status=status.HTTP_400_BAD_REQUEST)
 
