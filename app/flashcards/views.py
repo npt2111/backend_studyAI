@@ -14,10 +14,10 @@ from .serializers import (
     FlashcardQuerySerializer,
 )
 from .services import (
+    calculate_flashcard_progress,
     generate_flashcards,
     normalize_flashcard,
     normalize_flashcard_attempt,
-    summarize_flashcard_progress,
 )
 
 
@@ -216,7 +216,7 @@ class UpdateFlashcardAttemptApiView(APIView):
             total = int(attempt_row.get("total_cards") or 0)
             old_viewed = int(attempt_row.get("viewed_count") or 0)
             safe_viewed = max(old_viewed, viewed_count)
-            progress = summarize_flashcard_progress(viewed_count=safe_viewed, total_cards=total)
+            progress = calculate_flashcard_progress(viewed_count=safe_viewed, total_cards=total)
             updated_row, update_status = supabase_client.update_flashcard_attempt(
                 str(attempt_id),
                 {
@@ -253,7 +253,7 @@ class FinishFlashcardAttemptApiView(APIView):
                 return Response({"message": "Ban khong co quyen ket thuc attempt nay."}, status=status.HTTP_403_FORBIDDEN)
 
             total = int(attempt_row.get("total_cards") or 0)
-            progress = summarize_flashcard_progress(viewed_count=total, total_cards=total)
+            progress = calculate_flashcard_progress(viewed_count=total, total_cards=total)
             updated_row, update_status = supabase_client.update_flashcard_attempt(
                 str(attempt_id),
                 {

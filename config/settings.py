@@ -61,7 +61,6 @@ INSTALLED_APPS = [
     'app.planner',
     'app.analytics',
     'app.documents',
-    'app.summarize',
     'app.mindmap'
 ]
 
@@ -141,14 +140,8 @@ CORS_ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 
-# Local LLM used by the summary worker.
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:1b")
-OLLAMA_TIMEOUT_SECONDS = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
-OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
-OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "4096"))
-
 # PDF reader settings: pdfplumber first, EasyOCR only for pages with weak text.
+DOCUMENT_MAX_FILE_MB = int(os.getenv("DOCUMENT_MAX_FILE_MB", "20"))
 PDFPLUMBER_TEXT_MIN_WORDS_PER_PAGE = int(os.getenv("PDFPLUMBER_TEXT_MIN_WORDS_PER_PAGE", "20"))
 EASYOCR_ENABLED = env_bool("EASYOCR_ENABLED", True)
 EASYOCR_LANGS = os.getenv("EASYOCR_LANGS", "vi,en")
@@ -160,18 +153,6 @@ PDF_OCR_MAX_PAGES = int(os.getenv("PDF_OCR_MAX_PAGES", "0"))
 
 # Supabase Storage
 SUPABASE_STORAGE_BUCKET  = os.getenv("SUPABASE_STORAGE_BUCKET", "study-documents")
-
-# Summary pipeline
-SUMMARY_MAX_FILE_MB      = int(os.getenv("SUMMARY_MAX_FILE_MB", "20"))
-SUMMARY_CHUNK_CHARS      = int(os.getenv("SUMMARY_CHUNK_CHARS", "1800"))
-SUMMARY_WORKER_THREADS   = int(os.getenv("SUMMARY_WORKER_THREADS", "1"))
-# Keep heavy document processing out of the web process by default.
-# Set SUMMARY_USE_INLINE_WORKER=true only for quick local all-in-one testing.
-SUMMARY_USE_INLINE_WORKER = env_bool("SUMMARY_USE_INLINE_WORKER", False)
-SUMMARY_CHUNK_MAX_TOKENS = int(os.getenv("SUMMARY_CHUNK_MAX_TOKENS", "300"))
-SUMMARY_FINAL_MAX_TOKENS = int(os.getenv("SUMMARY_FINAL_MAX_TOKENS", "600"))
-SUMMARY_LLM_INPUT_CHARS = int(os.getenv("SUMMARY_LLM_INPUT_CHARS", "8000"))
-SUMMARY_PRESELECT_SENTENCES = int(os.getenv("SUMMARY_PRESELECT_SENTENCES", "40"))
 
 # Groq quiz generation
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()

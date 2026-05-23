@@ -277,34 +277,6 @@ def download_storage_file(*, bucket: str, object_path: str) -> Tuple[Any, int]:
     return response.content, response.status_code
 
 
-def create_summary_job(
-    *,
-    user_id: str,
-    file_name: str,
-    storage_path: str,
-    mime_type: str,
-) -> Tuple[Dict[str, Any], int]:
-    payload: Dict[str, Any] = {
-        "id_user": user_id,
-        "file_name": file_name,
-        "storage_path": storage_path,
-        "mime_type": mime_type,
-        "status": "queued",
-        "progress": 0,
-        "updated_at": _now_iso(),
-    }
-
-    response_payload, response_status = _request(
-        "POST",
-        "/rest/v1/ai_summary_jobs",
-        json=payload,
-        extra_headers={"Prefer": "return=representation"},
-    )
-    if isinstance(response_payload, list):
-        return (response_payload[0] if response_payload else payload), response_status
-    return response_payload, response_status
-
-
 def create_document_read_result(
     *,
     user_id: str,
@@ -380,70 +352,6 @@ def delete_document_read_result(read_id: str) -> Tuple[Dict[str, Any], int]:
     response_payload, response_status = _request(
         "DELETE",
         f"/rest/v1/document_read_results?id_read=eq.{encoded}",
-        extra_headers={"Prefer": "return=representation"},
-    )
-    if isinstance(response_payload, list):
-        return (response_payload[0] if response_payload else {}), response_status
-    return response_payload, response_status
-
-
-def get_summary_job(job_id: str) -> Tuple[Dict[str, Any], int]:
-    encoded = quote(job_id, safe="")
-    return _select_one(f"/rest/v1/ai_summary_jobs?select=*&id_job=eq.{encoded}&limit=1")
-
-
-def list_summary_jobs(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[str, Any]], int]:
-    safe_limit = max(1, min(limit, 100))
-    encoded_user = quote(user_id, safe="")
-    payload, status_code = _request(
-        "GET",
-        f"/rest/v1/ai_summary_jobs?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={safe_limit}",
-    )
-    if isinstance(payload, list):
-        return payload, 200
-    return [], status_code
-
-
-def list_queued_summary_jobs(*, limit: int = 10) -> Tuple[List[Dict[str, Any]], int]:
-    safe_limit = max(1, min(limit, 100))
-    payload, status_code = _request(
-        "GET",
-        f"/rest/v1/ai_summary_jobs?select=*&status=eq.queued&order=created_at.asc&limit={safe_limit}",
-    )
-    if isinstance(payload, list):
-        return payload, 200
-    return [], status_code
-
-
-def update_summary_job(job_id: str, fields: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
-    encoded = quote(job_id, safe="")
-    payload = dict(fields)
-    payload["updated_at"] = _now_iso()
-    response_payload, response_status = _request(
-        "PATCH",
-        f"/rest/v1/ai_summary_jobs?id_job=eq.{encoded}",
-        json=payload,
-        extra_headers={"Prefer": "return=representation"},
-    )
-    if isinstance(response_payload, list):
-        return (response_payload[0] if response_payload else payload), response_status
-    return response_payload, response_status
-
-
-def claim_summary_job(job_id: str) -> Tuple[Dict[str, Any], int]:
-    encoded = quote(job_id, safe="")
-    payload = {
-        "status": "processing",
-        "progress": 5,
-        "started_at": _now_iso(),
-        "finished_at": None,
-        "error_message": None,
-        "updated_at": _now_iso(),
-    }
-    response_payload, response_status = _request(
-        "PATCH",
-        f"/rest/v1/ai_summary_jobs?id_job=eq.{encoded}&status=eq.queued",
-        json=payload,
         extra_headers={"Prefer": "return=representation"},
     )
     if isinstance(response_payload, list):

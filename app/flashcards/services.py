@@ -54,7 +54,7 @@ def normalize_flashcard_attempt(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def summarize_flashcard_progress(*, viewed_count: int, total_cards: int) -> Dict[str, Any]:
+def calculate_flashcard_progress(*, viewed_count: int, total_cards: int) -> Dict[str, Any]:
     safe_total = max(total_cards, 1)
     safe_viewed = max(0, min(viewed_count, safe_total))
     return {
