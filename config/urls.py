@@ -14,5 +14,6 @@ urlpatterns = [
     path("api/quiz/", include("app.quiz.urls")),
     path("api/flashcards/", include("app.flashcards.urls")),
     path("api/mindmap/", include("app.mindmap.urls")),
+    path("api/chat/", include("app.chat.urls")),
     path("api/planner/", include("app.planner.urls")),
 ]

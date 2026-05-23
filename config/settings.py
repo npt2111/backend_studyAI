@@ -164,7 +164,10 @@ QUIZ_SOURCE_MAX_CHARS = int(os.getenv("QUIZ_SOURCE_MAX_CHARS", "16000"))
 # Gemini mindmap generation
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+CHAT_GEMINI_MODEL = os.getenv("CHAT_GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
 GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").strip().rstrip("/")
 GEMINI_TIMEOUT_SECONDS = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "120"))
 MINDMAP_SOURCE_MAX_CHARS = int(os.getenv("MINDMAP_SOURCE_MAX_CHARS", "18000"))
+CHAT_SOURCE_MAX_CHARS = int(os.getenv("CHAT_SOURCE_MAX_CHARS", "18000"))
+CHAT_HISTORY_LIMIT = int(os.getenv("CHAT_HISTORY_LIMIT", "12"))
 
