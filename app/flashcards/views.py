@@ -266,6 +266,19 @@ class FinishFlashcardAttemptApiView(APIView):
             )
             if update_status >= 400:
                 return Response({"message": "Ket thuc flashcard attempt that bai.", "error": updated_row}, status=status.HTTP_502_BAD_GATEWAY)
+            try:
+                supabase_client.create_study_activity(
+                    user_id=user_id,
+                    activity_type="flashcard",
+                    title="Flash Card",
+                    description=f"Ôn tập {total} thẻ",
+                    duration_seconds=elapsed_seconds,
+                    read_id=str(attempt_row.get("id_read") or ""),
+                    source_id=str(attempt_id),
+                    metadata={"total_cards": total},
+                )
+            except Exception:
+                pass
             return Response({"attempt": normalize_flashcard_attempt(updated_row)}, status=status.HTTP_200_OK)
         except SupabaseConfigError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
