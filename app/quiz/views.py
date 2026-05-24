@@ -305,6 +305,23 @@ class FinishQuizAttemptApiView(APIView):
             )
             if update_status >= 400:
                 return Response({"message": "Ket thuc attempt that bai.", "error": updated_row}, status=status.HTTP_502_BAD_GATEWAY)
+            try:
+                supabase_client.create_study_activity(
+                    user_id=user_id,
+                    activity_type="quiz",
+                    title="Quiz",
+                    description=f"Hoàn thành {total} câu hỏi",
+                    duration_seconds=elapsed_seconds,
+                    read_id=str(attempt_row.get("id_read") or ""),
+                    source_id=str(attempt_id),
+                    metadata={
+                        "correct_count": attempt_stats.get("correct_count", 0),
+                        "wrong_count": attempt_stats.get("wrong_count", 0),
+                        "total_questions": total,
+                    },
+                )
+            except Exception:
+                pass
             return Response({"attempt": normalize_attempt(updated_row)}, status=status.HTTP_200_OK)
         except SupabaseConfigError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

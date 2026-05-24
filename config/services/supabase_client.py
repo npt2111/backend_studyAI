@@ -1,6 +1,6 @@
 import os
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import quote
 
 import requests
@@ -49,6 +49,39 @@ def _request(
     except ValueError:
         payload = {"detail": response.text}
     return payload, response.status_code
+
+
+def _request_raw(
+    method: str,
+    path: str,
+    json: Optional[Dict[str, Any]] = None,
+    extra_headers: Optional[Dict[str, str]] = None,
+) -> Tuple[Union[Dict[str, Any], List[Any]], int, Dict[str, str]]:
+    base_url, api_key = _settings()
+    headers = {
+        "apikey": api_key,
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
+
+    try:
+        response = requests.request(
+            method=method,
+            url=f"{base_url}{path}",
+            json=json,
+            headers=headers,
+            timeout=20,
+        )
+    except requests.RequestException as exc:
+        return {"message": "Khong the ket noi Supabase.", "detail": str(exc)}, 503, {}
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {"detail": response.text}
+    return payload, response.status_code, dict(response.headers)
 
 
 def _select_one(path_query: str) -> Tuple[Dict[str, Any], int]:
@@ -217,6 +250,10 @@ def public_storage_url(*, bucket: str, object_path: str) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _local_date_iso() -> str:
+    return datetime.now(timezone(timedelta(hours=7))).date().isoformat()
 
 
 def upload_storage_file(
@@ -715,3 +752,156 @@ def create_document_chat_message(
     if isinstance(response_payload, list):
         return (response_payload[0] if response_payload else payload), response_status
     return response_payload, response_status
+
+
+def create_study_activity(
+    *,
+    user_id: str,
+    activity_type: str,
+    title: str,
+    description: str = "",
+    duration_seconds: int = 0,
+    read_id: str = "",
+    source_id: str = "",
+    metadata: Optional[Dict[str, Any]] = None,
+    activity_date: str = "",
+) -> Tuple[Dict[str, Any], int]:
+    payload: Dict[str, Any] = {
+        "id_user": user_id,
+        "activity_type": activity_type,
+        "title": title,
+        "description": description,
+        "duration_seconds": max(0, int(duration_seconds or 0)),
+        "metadata": metadata or {},
+    }
+    if read_id:
+        payload["id_read"] = read_id
+    if source_id:
+        payload["source_id"] = source_id
+    if activity_date:
+        payload["activity_date"] = activity_date
+    else:
+        payload["activity_date"] = _local_date_iso()
+
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/study_activities",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def list_study_activities(
+    *,
+    user_id: str,
+    start_date: str = "",
+    end_date: str = "",
+    limit: int = 100,
+) -> Tuple[List[Dict[str, Any]], int]:
+    safe_limit = max(1, min(limit, 500))
+    encoded_user = quote(user_id, safe="")
+    path = f"/rest/v1/study_activities?select=*&id_user=eq.{encoded_user}"
+    if start_date:
+        path += f"&activity_date=gte.{quote(start_date, safe='')}"
+    if end_date:
+        path += f"&activity_date=lte.{quote(end_date, safe='')}"
+    path += f"&order=created_at.desc&limit={safe_limit}"
+    payload, status_code = _request("GET", path)
+    if isinstance(payload, list):
+        return payload, 200
+    return [], status_code
+
+
+def count_document_read_results(*, user_id: str) -> Tuple[int, int]:
+    encoded_user = quote(user_id, safe="")
+    payload, status_code, headers = _request_raw(
+        "GET",
+        f"/rest/v1/document_read_results?select=id_read&id_user=eq.{encoded_user}&limit=1",
+        extra_headers={"Prefer": "count=exact"},
+    )
+    if status_code >= 400:
+        return 0, status_code
+
+    content_range = headers.get("Content-Range") or headers.get("content-range") or ""
+    total_text = content_range.rsplit("/", 1)[-1].strip()
+    if total_text.isdigit():
+        return int(total_text), 200
+    if isinstance(payload, list):
+        return len(payload), 200
+    return 0, status_code
+
+
+def get_weekly_goal(*, user_id: str, week_start_date: str) -> Tuple[Dict[str, Any], int]:
+    encoded_user = quote(user_id, safe="")
+    encoded_week = quote(week_start_date, safe="")
+    return _select_one(
+        f"/rest/v1/weekly_goals?select=*&id_user=eq.{encoded_user}&week_start_date=eq.{encoded_week}&limit=1"
+    )
+
+
+def create_weekly_goal(
+    *,
+    user_id: str,
+    week_start_date: str,
+    goal_hours: float = 20,
+) -> Tuple[Dict[str, Any], int]:
+    payload: Dict[str, Any] = {
+        "id_user": user_id,
+        "week_start_date": week_start_date,
+        "goal_hours": goal_hours,
+        "updated_at": _now_iso(),
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/weekly_goals",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def get_daily_checkin(*, user_id: str, checkin_date: str) -> Tuple[Dict[str, Any], int]:
+    encoded_user = quote(user_id, safe="")
+    encoded_date = quote(checkin_date, safe="")
+    return _select_one(
+        f"/rest/v1/daily_checkins?select=*&id_user=eq.{encoded_user}&checkin_date=eq.{encoded_date}&limit=1"
+    )
+
+
+def create_daily_checkin(*, user_id: str, checkin_date: str) -> Tuple[Dict[str, Any], int]:
+    payload = {"id_user": user_id, "checkin_date": checkin_date}
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/daily_checkins",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def list_daily_checkins(
+    *,
+    user_id: str,
+    start_date: str = "",
+    end_date: str = "",
+    limit: int = 370,
+) -> Tuple[List[Dict[str, Any]], int]:
+    safe_limit = max(1, min(limit, 1000))
+    encoded_user = quote(user_id, safe="")
+    path = f"/rest/v1/daily_checkins?select=*&id_user=eq.{encoded_user}"
+    if start_date:
+        path += f"&checkin_date=gte.{quote(start_date, safe='')}"
+    if end_date:
+        path += f"&checkin_date=lte.{quote(end_date, safe='')}"
+    path += f"&order=checkin_date.desc&limit={safe_limit}"
+    payload, status_code = _request("GET", path)
+    if isinstance(payload, list):
+        return payload, 200
+    return [], status_code

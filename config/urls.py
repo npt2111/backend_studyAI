@@ -20,4 +20,5 @@ urlpatterns = [
     path("api/chat/document/message/", SendDocumentChatMessageApiView.as_view(), name="document-chat-message-direct"),
     path("api/chat/document/sessions/<uuid:session_id>/", DocumentChatSessionApiView.as_view(), name="document-chat-session-direct"),
     path("api/planner/", include("app.planner.urls")),
+    path("api/analytics/", include("app.analytics.urls")),
 ]

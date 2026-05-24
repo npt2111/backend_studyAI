@@ -142,6 +142,19 @@ class UploadDocumentApiView(APIView):
                         {"message": "Luu ket qua doc file that bai.", "error": read_row},
                         status=status.HTTP_502_BAD_GATEWAY,
                     )
+                try:
+                    supabase_client.create_study_activity(
+                        user_id=user_id,
+                        activity_type="document",
+                        title="Tài liệu",
+                        description=f"Đã đọc tài liệu {file_name}",
+                        duration_seconds=max(60, len(extracted_text.split()) // 3),
+                        read_id=read_id,
+                        source_id=read_id,
+                        metadata={"file_name": file_name, "source_word_count": len(extracted_text.split())},
+                    )
+                except Exception:
+                    pass
             except Exception as exc:
                 failed_row, _ = supabase_client.update_document_read_result(
                     read_id,
