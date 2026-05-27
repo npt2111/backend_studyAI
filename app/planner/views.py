@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -6,7 +7,8 @@ from rest_framework.views import APIView
 from config.services import supabase_client
 from config.services.supabase_client import SupabaseConfigError
 
-from .serializers import PlanTaskSerializer, PlanTaskStatusSerializer, UpdatePlanTaskSerializer
+from .notifications import send_due_task_notifications
+from .serializers import FcmTokenSerializer, PlanTaskSerializer, PlanTaskStatusSerializer, UpdatePlanTaskSerializer
 
 
 def _extract_first_error(errors) -> str:
@@ -198,3 +200,66 @@ class PlanTaskDetailApiView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class FcmTokenApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        serializer = FcmTokenSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "message": _extract_first_error(serializer.errors),
+                    "errors": serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = serializer.validated_data
+        try:
+            token_row, save_status = supabase_client.upsert_fcm_token(
+                user_id=str(data["id_user"]),
+                token=data["token"].strip(),
+                device_type=(data.get("device_type") or "android").strip() or "android",
+            )
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if save_status >= 400:
+            return Response(
+                {"message": "Luu FCM token that bai.", "error": token_row},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response(
+            {"message": "Luu FCM token thanh cong.", "token": token_row},
+            status=status.HTTP_200_OK,
+        )
+
+
+class SendDueTaskNotificationsApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        return self._send(request)
+
+    def post(self, request):
+        return self._send(request)
+
+    def _send(self, request):
+        cron_secret = getattr(settings, "CRON_SECRET", "")
+        request_secret = request.headers.get("X-Cron-Secret") or request.query_params.get("secret")
+        if cron_secret and request_secret != cron_secret:
+            return Response({"message": "Cron secret khong hop le."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            result = send_due_task_notifications()
+        except Exception as exc:
+            return Response(
+                {"message": "Gui thong bao that bai.", "detail": str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        return Response(result, status=status.HTTP_200_OK)
