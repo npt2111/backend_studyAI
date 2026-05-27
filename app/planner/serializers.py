@@ -21,6 +21,12 @@ class PlanTaskStatusSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=["pending", "done"])
 
 
+class FcmTokenSerializer(serializers.Serializer):
+    id_user = serializers.UUIDField()
+    token = serializers.CharField(max_length=4096)
+    device_type = serializers.CharField(required=False, allow_blank=True, default="android")
+
+
 class UpdatePlanTaskSerializer(serializers.Serializer):
     task_name = serializers.CharField(max_length=255)
     subject = serializers.CharField(max_length=120, allow_blank=True, required=False)

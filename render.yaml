@@ -23,3 +23,7 @@ services:
         sync: false
       - key: SUPABASE_KEY
         sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: CRON_SECRET
+        generateValue: true

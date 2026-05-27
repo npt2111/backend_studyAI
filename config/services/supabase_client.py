@@ -242,6 +242,87 @@ def delete_plan_task(task_id: str) -> Tuple[Dict[str, Any], int]:
     return response_payload, response_status
 
 
+def upsert_fcm_token(
+    *,
+    user_id: str,
+    token: str,
+    device_type: str = "android",
+) -> Tuple[Dict[str, Any], int]:
+    payload = {
+        "id_user": user_id,
+        "token": token,
+        "device_type": device_type,
+        "is_active": True,
+        "updated_at": _now_iso(),
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/user_fcm_tokens?on_conflict=token",
+        json=payload,
+        extra_headers={"Prefer": "resolution=merge-duplicates,return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def list_active_fcm_tokens(user_id: str) -> Tuple[List[Dict[str, Any]], int]:
+    encoded_user = quote(user_id, safe="")
+    payload, status_code = _request(
+        "GET",
+        f"/rest/v1/user_fcm_tokens?select=*&id_user=eq.{encoded_user}&is_active=eq.true",
+    )
+    if isinstance(payload, list):
+        return payload, status_code
+    return [], status_code
+
+
+def deactivate_fcm_token(token: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(token, safe="")
+    response_payload, response_status = _request(
+        "PATCH",
+        f"/rest/v1/user_fcm_tokens?token=eq.{encoded}",
+        json={"is_active": False, "updated_at": _now_iso()},
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else {}), response_status
+    return response_payload, response_status
+
+
+def list_due_plan_tasks(*, minutes_window: int = 2) -> Tuple[List[Dict[str, Any]], int]:
+    now_local = datetime.now(timezone(timedelta(hours=7)))
+    today = now_local.date().isoformat()
+    lower_time = (now_local - timedelta(minutes=minutes_window)).time().replace(microsecond=0).isoformat()
+    upper_time = now_local.time().replace(microsecond=0).isoformat()
+    path = (
+        "/rest/v1/plan_tasks?select=*"
+        f"&task_date=eq.{quote(today, safe='')}"
+        "&status=eq.pending"
+        "&reminder_sent_at=is.null"
+        f"&start_time=gte.{quote(lower_time, safe='')}"
+        f"&start_time=lte.{quote(upper_time, safe='')}"
+        "&order=start_time.asc"
+    )
+    payload, status_code = _request("GET", path)
+    if isinstance(payload, list):
+        return payload, status_code
+    return [], status_code
+
+
+def mark_plan_task_reminder_sent(task_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(task_id, safe="")
+    response_payload, response_status = _request(
+        "PATCH",
+        f"/rest/v1/plan_tasks?id_task=eq.{encoded}",
+        json={"reminder_sent_at": _now_iso()},
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else {}), response_status
+    return response_payload, response_status
+
+
 def public_storage_url(*, bucket: str, object_path: str) -> str:
     base_url, _ = _settings()
     encoded_path = quote(object_path.lstrip("/"), safe="/")

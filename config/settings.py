@@ -171,3 +171,7 @@ MINDMAP_SOURCE_MAX_CHARS = int(os.getenv("MINDMAP_SOURCE_MAX_CHARS", "18000"))
 CHAT_SOURCE_MAX_CHARS = int(os.getenv("CHAT_SOURCE_MAX_CHARS", "18000"))
 CHAT_HISTORY_LIMIT = int(os.getenv("CHAT_HISTORY_LIMIT", "12"))
 
+# Firebase Cloud Messaging
+FIREBASE_SERVICE_ACCOUNT_JSON = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+CRON_SECRET = os.getenv("CRON_SECRET", "").strip()
+
