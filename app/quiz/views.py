@@ -14,6 +14,7 @@ from .serializers import (
     QuizGenerateSerializer,
     QuizListQuerySerializer,
     QuizQuerySerializer,
+    QuizSaveSharedSerializer,
     QuizShareCodeSerializer,
 )
 from .services import (
@@ -52,6 +53,11 @@ def _serializer_error_response(serializer, fallback: str):
 def _share_url(request, share_code: str) -> str:
     base = request.build_absolute_uri("/").rstrip("/")
     return f"{base}/api/quiz/share/{share_code}/"
+
+
+def _can_access_quiz(row, user_id: str) -> bool:
+    quiz_id = str(row.get("id_quiz") or "")
+    return str(row.get("id_user")) == user_id or supabase_client.is_quiz_saved(user_id=user_id, quiz_id=quiz_id)
 
 
 class GenerateQuizApiView(APIView):
@@ -155,7 +161,7 @@ class QuizDetailApiView(APIView):
                 return Response({"message": "Khong doc duoc quiz."}, status=status.HTTP_502_BAD_GATEWAY)
             if not row:
                 return Response({"message": "Khong tim thay quiz."}, status=status.HTTP_404_NOT_FOUND)
-            if str(row.get("id_user")) != user_id:
+            if not _can_access_quiz(row, user_id):
                 return Response({"message": "Ban khong co quyen xem quiz nay."}, status=status.HTTP_403_FORBIDDEN)
             return Response({"quiz": normalize_quiz(row)}, status=status.HTTP_200_OK)
         except SupabaseConfigError as exc:
@@ -185,6 +191,9 @@ class QuizDetailApiView(APIView):
             _, share_status = supabase_client.delete_quiz_share_by_quiz(str(quiz_id))
             if share_status >= 400:
                 return Response({"message": "Xoa ma chia se cua quiz that bai."}, status=status.HTTP_502_BAD_GATEWAY)
+            _, saved_status = supabase_client.delete_quiz_saved_by_quiz(str(quiz_id))
+            if saved_status >= 400:
+                return Response({"message": "Xoa quiz saved that bai."}, status=status.HTTP_502_BAD_GATEWAY)
 
             deleted_row, delete_status = supabase_client.delete_quiz_generation(str(quiz_id))
             if delete_status >= 400:
@@ -289,6 +298,58 @@ class QuizSharedDetailApiView(APIView):
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class QuizSaveSharedApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request, share_code):
+        code_serializer = QuizShareCodeSerializer(data={"share_code": share_code})
+        if not code_serializer.is_valid():
+            return _serializer_error_response(code_serializer, "Ma chia se khong hop le.")
+        serializer = QuizSaveSharedSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Du lieu luu quiz khong hop le.")
+
+        code = str(code_serializer.validated_data["share_code"]).strip().lower()
+        user_id = str(serializer.validated_data["user_id"])
+        try:
+            share_row, share_status = supabase_client.get_quiz_share_by_code(code)
+            if share_status >= 400:
+                return Response({"message": "Khong doc duoc ma chia se."}, status=status.HTTP_502_BAD_GATEWAY)
+            if not share_row:
+                return Response({"message": "Khong tim thay ma chia se."}, status=status.HTTP_404_NOT_FOUND)
+
+            quiz_id = str(share_row.get("id_quiz") or "")
+            row, row_status = supabase_client.get_quiz_generation(quiz_id)
+            if row_status >= 400:
+                return Response({"message": "Khong doc duoc quiz."}, status=status.HTTP_502_BAD_GATEWAY)
+            if not row:
+                return Response({"message": "Quiz da bi xoa hoac khong ton tai."}, status=status.HTTP_404_NOT_FOUND)
+
+            owner = str(row.get("id_user")) == user_id
+            saved = False
+            if not owner:
+                saved_row, saved_status = supabase_client.save_shared_quiz(
+                    user_id=user_id,
+                    quiz_id=quiz_id,
+                    share_code=code,
+                )
+                if saved_status >= 400:
+                    return Response({"message": "Luu quiz that bai.", "error": saved_row}, status=status.HTTP_502_BAD_GATEWAY)
+                saved = True
+            return Response(
+                {
+                    "share_code": code,
+                    "saved": saved,
+                    "owner": owner,
+                    "quiz": normalize_quiz(row),
+                },
+                status=status.HTTP_200_OK,
+            )
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class StartQuizAttemptApiView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -306,7 +367,7 @@ class StartQuizAttemptApiView(APIView):
                 return Response({"message": "Khong doc duoc quiz."}, status=status.HTTP_502_BAD_GATEWAY)
             if not quiz_row:
                 return Response({"message": "Khong tim thay quiz."}, status=status.HTTP_404_NOT_FOUND)
-            if str(quiz_row.get("id_user")) != user_id:
+            if not _can_access_quiz(quiz_row, user_id):
                 return Response({"message": "Ban khong co quyen lam quiz nay."}, status=status.HTTP_403_FORBIDDEN)
 
             questions = quiz_row.get("questions")

@@ -537,16 +537,25 @@ def list_quiz_generations(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[s
         "GET",
         f"/rest/v1/quiz_generations?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={safe_limit}",
     )
-    if isinstance(payload, list):
-        for row in payload:
-            quiz_id = str(row.get("id_quiz") or "")
-            if not quiz_id:
-                continue
-            latest_attempt, attempt_status = get_latest_quiz_attempt(user_id=user_id, quiz_id=quiz_id)
-            if attempt_status < 400 and latest_attempt:
-                row["latest_attempt"] = latest_attempt
-        return payload, 200
-    return [], status_code
+    own_rows = payload if isinstance(payload, list) else []
+    saved_rows, saved_status = list_saved_quizzes(user_id=user_id, limit=safe_limit)
+    if status_code >= 400:
+        return [], status_code
+    if saved_status >= 400:
+        saved_rows = []
+    rows: List[Dict[str, Any]] = []
+    seen = set()
+    for row in own_rows + saved_rows:
+        quiz_id = str(row.get("id_quiz") or "")
+        if not quiz_id or quiz_id in seen:
+            continue
+        seen.add(quiz_id)
+        latest_attempt, attempt_status = get_latest_quiz_attempt(user_id=user_id, quiz_id=quiz_id)
+        if attempt_status < 400 and latest_attempt:
+            row["latest_attempt"] = latest_attempt
+        rows.append(row)
+    rows.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return rows[:safe_limit], 200
 
 
 def get_latest_quiz_attempt(*, user_id: str, quiz_id: str) -> Tuple[Dict[str, Any], int]:
@@ -687,6 +696,71 @@ def create_quiz_share(*, quiz_id: str, user_id: str) -> Tuple[Dict[str, Any], in
         if response_status != 409:
             return response_payload, response_status
     return {"message": "Khong tao duoc share_code duy nhat."}, 409
+
+
+def is_quiz_saved(*, user_id: str, quiz_id: str) -> bool:
+    encoded_user = quote(user_id, safe="")
+    encoded_quiz = quote(quiz_id, safe="")
+    row, status_code = _select_one(
+        f"/rest/v1/quiz_saved?select=*&id_user=eq.{encoded_user}&id_quiz=eq.{encoded_quiz}&limit=1"
+    )
+    return status_code < 400 and bool(row)
+
+
+def save_shared_quiz(*, user_id: str, quiz_id: str, share_code: str) -> Tuple[Dict[str, Any], int]:
+    existing_user = quote(user_id, safe="")
+    existing_quiz = quote(quiz_id, safe="")
+    existing, existing_status = _select_one(
+        f"/rest/v1/quiz_saved?select=*&id_user=eq.{existing_user}&id_quiz=eq.{existing_quiz}&limit=1"
+    )
+    if existing_status < 400 and existing:
+        return existing, 200
+    payload = {
+        "id_user": user_id,
+        "id_quiz": quiz_id,
+        "share_code": share_code,
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/quiz_saved",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def list_saved_quizzes(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[str, Any]], int]:
+    safe_limit = max(1, min(limit, 100))
+    encoded_user = quote(user_id, safe="")
+    saved_payload, saved_status = _request(
+        "GET",
+        f"/rest/v1/quiz_saved?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={safe_limit}",
+    )
+    if not isinstance(saved_payload, list):
+        return [], saved_status
+    rows: List[Dict[str, Any]] = []
+    for saved in saved_payload:
+        quiz_id = str(saved.get("id_quiz") or "")
+        if not quiz_id:
+            continue
+        quiz_row, quiz_status = get_quiz_generation(quiz_id)
+        if quiz_status < 400 and quiz_row:
+            rows.append(quiz_row)
+    return rows, 200
+
+
+def delete_quiz_saved_by_quiz(quiz_id: str) -> Tuple[List[Dict[str, Any]], int]:
+    encoded = quote(quiz_id, safe="")
+    response_payload, response_status = _request(
+        "DELETE",
+        f"/rest/v1/quiz_saved?id_quiz=eq.{encoded}",
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return response_payload, response_status
+    return [], response_status
 
 
 def delete_quiz_share_by_quiz(quiz_id: str) -> Tuple[List[Dict[str, Any]], int]:

@@ -105,3 +105,7 @@ class QuizShareCodeSerializer(serializers.Serializer):
             "blank": "share_code khong duoc rong.",
         },
     )
+
+
+class QuizSaveSharedSerializer(QuizQuerySerializer):
+    pass
