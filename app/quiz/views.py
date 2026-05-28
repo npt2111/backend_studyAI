@@ -110,19 +110,13 @@ class GenerateQuizApiView(APIView):
                     },
                 )
                 if update_status >= 400:
+                    supabase_client.delete_quiz_generation(quiz_id)
                     return Response({"message": "Luu quiz that bai.", "error": quiz_row}, status=status.HTTP_502_BAD_GATEWAY)
             except Exception as exc:
-                failed_row, _ = supabase_client.update_quiz_generation(
-                    quiz_id,
-                    {
-                        "status": "failed",
-                        "error_message": str(exc)[:1000] if str(exc) else "Khong ro loi.",
-                    },
-                )
+                supabase_client.delete_quiz_generation(quiz_id)
                 return Response(
                     {
                         "message": str(exc) if str(exc) else "Tao quiz that bai.",
-                        "quiz": normalize_quiz(failed_row or quiz_row),
                     },
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )

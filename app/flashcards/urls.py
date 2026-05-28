@@ -3,6 +3,7 @@ from django.urls import path
 from .views import (
     FinishFlashcardAttemptApiView,
     FlashcardDetailApiView,
+    FlashcardListApiView,
     GenerateFlashcardApiView,
     StartFlashcardAttemptApiView,
     UpdateFlashcardAttemptApiView,
@@ -10,6 +11,7 @@ from .views import (
 
 urlpatterns = [
     path("generate/", GenerateFlashcardApiView.as_view(), name="flashcard-generate"),
+    path("items/", FlashcardListApiView.as_view(), name="flashcard-list"),
     path("items/<uuid:flashcard_id>/", FlashcardDetailApiView.as_view(), name="flashcard-detail"),
     path("attempts/start/", StartFlashcardAttemptApiView.as_view(), name="flashcard-attempt-start"),
     path("attempts/<uuid:attempt_id>/progress/", UpdateFlashcardAttemptApiView.as_view(), name="flashcard-attempt-progress"),
