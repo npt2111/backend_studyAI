@@ -696,6 +696,62 @@ def get_flashcard_generation(flashcard_id: str) -> Tuple[Dict[str, Any], int]:
     return _select_one(f"/rest/v1/flashcard_generations?select=*&id_flashcard=eq.{encoded}&limit=1")
 
 
+def list_flashcard_generations(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[str, Any]], int]:
+    safe_limit = max(1, min(limit, 100))
+    encoded_user = quote(user_id, safe="")
+    payload, status_code = _request(
+        "GET",
+        f"/rest/v1/flashcard_generations?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={safe_limit}",
+    )
+    if isinstance(payload, list):
+        for row in payload:
+            flashcard_id = str(row.get("id_flashcard") or "")
+            if not flashcard_id:
+                continue
+            latest_attempt, attempt_status = get_latest_flashcard_attempt(user_id=user_id, flashcard_id=flashcard_id)
+            if attempt_status < 400 and latest_attempt:
+                row["latest_attempt"] = latest_attempt
+        return payload, 200
+    return [], status_code
+
+
+def get_latest_flashcard_attempt(*, user_id: str, flashcard_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded_user = quote(user_id, safe="")
+    encoded_flashcard = quote(flashcard_id, safe="")
+    return _select_one(
+        "/rest/v1/flashcard_attempts?select=*"
+        f"&id_user=eq.{encoded_user}"
+        f"&id_flashcard=eq.{encoded_flashcard}"
+        "&order=updated_at.desc"
+        "&limit=1"
+    )
+
+
+def delete_flashcard_attempts_by_flashcard(*, user_id: str, flashcard_id: str) -> Tuple[List[Dict[str, Any]], int]:
+    encoded_user = quote(user_id, safe="")
+    encoded_flashcard = quote(flashcard_id, safe="")
+    response_payload, response_status = _request(
+        "DELETE",
+        f"/rest/v1/flashcard_attempts?id_user=eq.{encoded_user}&id_flashcard=eq.{encoded_flashcard}",
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return response_payload, response_status
+    return [], response_status
+
+
+def delete_flashcard_generation(flashcard_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(flashcard_id, safe="")
+    response_payload, response_status = _request(
+        "DELETE",
+        f"/rest/v1/flashcard_generations?id_flashcard=eq.{encoded}",
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else {}), response_status
+    return response_payload, response_status
+
+
 def create_flashcard_attempt(
     *,
     user_id: str,

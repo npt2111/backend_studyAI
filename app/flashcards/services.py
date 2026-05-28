@@ -29,6 +29,7 @@ def normalize_flashcard(row: Dict[str, Any]) -> Dict[str, Any]:
         "error": row.get("error_message"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
+        "latest_attempt": normalize_flashcard_attempt(row.get("latest_attempt") or {}) if row.get("latest_attempt") else None,
     }
 
 

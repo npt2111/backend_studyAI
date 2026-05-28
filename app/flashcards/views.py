@@ -11,6 +11,7 @@ from .serializers import (
     FlashcardAttemptProgressSerializer,
     FlashcardAttemptStartSerializer,
     FlashcardGenerateSerializer,
+    FlashcardListQuerySerializer,
     FlashcardQuerySerializer,
 )
 from .services import (
@@ -103,19 +104,13 @@ class GenerateFlashcardApiView(APIView):
                     },
                 )
                 if update_status >= 400:
+                    supabase_client.delete_flashcard_generation(flashcard_id)
                     return Response({"message": "Luu flashcard that bai.", "error": flashcard_row}, status=status.HTTP_502_BAD_GATEWAY)
             except Exception as exc:
-                failed_row, _ = supabase_client.update_flashcard_generation(
-                    flashcard_id,
-                    {
-                        "status": "failed",
-                        "error_message": str(exc)[:1000] if str(exc) else "Khong ro loi.",
-                    },
-                )
+                supabase_client.delete_flashcard_generation(flashcard_id)
                 return Response(
                     {
                         "message": str(exc) if str(exc) else "Tao flashcard that bai.",
-                        "flashcard": normalize_flashcard(failed_row or flashcard_row),
                     },
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
@@ -150,6 +145,58 @@ class FlashcardDetailApiView(APIView):
             if str(row.get("id_user")) != user_id:
                 return Response({"message": "Ban khong co quyen xem flashcard nay."}, status=status.HTTP_403_FORBIDDEN)
             return Response({"flashcard": normalize_flashcard(row)}, status=status.HTTP_200_OK)
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def delete(self, request, flashcard_id):
+        serializer = FlashcardQuerySerializer(data=request.query_params)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Query param khong hop le.")
+
+        user_id = str(serializer.validated_data["user_id"])
+        try:
+            row, row_status = supabase_client.get_flashcard_generation(str(flashcard_id))
+            if row_status >= 400:
+                return Response({"message": "Khong doc duoc flashcard."}, status=status.HTTP_502_BAD_GATEWAY)
+            if not row:
+                return Response({"message": "Khong tim thay flashcard."}, status=status.HTTP_404_NOT_FOUND)
+            if str(row.get("id_user")) != user_id:
+                return Response({"message": "Ban khong co quyen xoa flashcard nay."}, status=status.HTTP_403_FORBIDDEN)
+
+            _, attempts_status = supabase_client.delete_flashcard_attempts_by_flashcard(
+                user_id=user_id,
+                flashcard_id=str(flashcard_id),
+            )
+            if attempts_status >= 400:
+                return Response({"message": "Xoa attempt cua flashcard that bai."}, status=status.HTTP_502_BAD_GATEWAY)
+
+            deleted_row, delete_status = supabase_client.delete_flashcard_generation(str(flashcard_id))
+            if delete_status >= 400:
+                return Response({"message": "Xoa flashcard that bai.", "error": deleted_row}, status=status.HTTP_502_BAD_GATEWAY)
+            return Response(
+                {"message": "Da xoa flashcard.", "flashcard": normalize_flashcard(deleted_row or row)},
+                status=status.HTTP_200_OK,
+            )
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class FlashcardListApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        serializer = FlashcardListQuerySerializer(data=request.query_params)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Query param khong hop le.")
+
+        user_id = str(serializer.validated_data["user_id"])
+        limit = int(serializer.validated_data["limit"])
+        try:
+            rows, rows_status = supabase_client.list_flashcard_generations(user_id=user_id, limit=limit)
+            if rows_status >= 400:
+                return Response({"message": "Khong lay duoc danh sach flashcard."}, status=status.HTTP_502_BAD_GATEWAY)
+            return Response({"flashcards": [normalize_flashcard(row) for row in rows]}, status=status.HTTP_200_OK)
         except SupabaseConfigError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

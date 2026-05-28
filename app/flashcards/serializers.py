@@ -39,6 +39,16 @@ class FlashcardQuerySerializer(serializers.Serializer):
     )
 
 
+class FlashcardListQuerySerializer(FlashcardQuerySerializer):
+    limit = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        max_value=50,
+        default=20,
+        error_messages={"invalid": "limit khong hop le."},
+    )
+
+
 class FlashcardAttemptStartSerializer(serializers.Serializer):
     user_id = serializers.UUIDField(
         error_messages={
