@@ -161,6 +161,38 @@ class QuizDetailApiView(APIView):
         except SupabaseConfigError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    def delete(self, request, quiz_id):
+        serializer = QuizQuerySerializer(data=request.query_params)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Query param khong hop le.")
+
+        user_id = str(serializer.validated_data["user_id"])
+        try:
+            row, row_status = supabase_client.get_quiz_generation(str(quiz_id))
+            if row_status >= 400:
+                return Response({"message": "Khong doc duoc quiz."}, status=status.HTTP_502_BAD_GATEWAY)
+            if not row:
+                return Response({"message": "Khong tim thay quiz."}, status=status.HTTP_404_NOT_FOUND)
+            if str(row.get("id_user")) != user_id:
+                return Response({"message": "Ban khong co quyen xoa quiz nay."}, status=status.HTTP_403_FORBIDDEN)
+
+            _, attempts_status = supabase_client.delete_quiz_attempts_by_quiz(
+                user_id=user_id,
+                quiz_id=str(quiz_id),
+            )
+            if attempts_status >= 400:
+                return Response({"message": "Xoa attempt cua quiz that bai."}, status=status.HTTP_502_BAD_GATEWAY)
+
+            deleted_row, delete_status = supabase_client.delete_quiz_generation(str(quiz_id))
+            if delete_status >= 400:
+                return Response({"message": "Xoa quiz that bai.", "error": deleted_row}, status=status.HTTP_502_BAD_GATEWAY)
+            return Response(
+                {"message": "Da xoa quiz.", "quiz": normalize_quiz(deleted_row or row)},
+                status=status.HTTP_200_OK,
+            )
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class QuizListApiView(APIView):
     permission_classes = [AllowAny]
