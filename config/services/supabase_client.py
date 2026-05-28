@@ -1,4 +1,6 @@
 import os
+import secrets
+import string
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import quote
@@ -645,6 +647,58 @@ def delete_quiz_generation(quiz_id: str) -> Tuple[Dict[str, Any], int]:
     if isinstance(response_payload, list):
         return (response_payload[0] if response_payload else {}), response_status
     return response_payload, response_status
+
+
+def _random_share_code(length: int = 9) -> str:
+    alphabet = string.ascii_lowercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def get_quiz_share_by_quiz(quiz_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(quiz_id, safe="")
+    return _select_one(f"/rest/v1/quiz_shares?select=*&id_quiz=eq.{encoded}&limit=1")
+
+
+def get_quiz_share_by_code(share_code: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(share_code.strip().lower(), safe="")
+    return _select_one(f"/rest/v1/quiz_shares?select=*&share_code=eq.{encoded}&limit=1")
+
+
+def create_quiz_share(*, quiz_id: str, user_id: str) -> Tuple[Dict[str, Any], int]:
+    existing, existing_status = get_quiz_share_by_quiz(quiz_id)
+    if existing_status < 400 and existing:
+        return existing, 200
+
+    for _ in range(6):
+        share_code = _random_share_code()
+        payload = {
+            "id_quiz": quiz_id,
+            "id_user": user_id,
+            "share_code": share_code,
+        }
+        response_payload, response_status = _request(
+            "POST",
+            "/rest/v1/quiz_shares",
+            json=payload,
+            extra_headers={"Prefer": "return=representation"},
+        )
+        if isinstance(response_payload, list):
+            return (response_payload[0] if response_payload else payload), response_status
+        if response_status != 409:
+            return response_payload, response_status
+    return {"message": "Khong tao duoc share_code duy nhat."}, 409
+
+
+def delete_quiz_share_by_quiz(quiz_id: str) -> Tuple[List[Dict[str, Any]], int]:
+    encoded = quote(quiz_id, safe="")
+    response_payload, response_status = _request(
+        "DELETE",
+        f"/rest/v1/quiz_shares?id_quiz=eq.{encoded}",
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return response_payload, response_status
+    return [], response_status
 
 
 def create_flashcard_generation(
