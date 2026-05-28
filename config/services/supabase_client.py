@@ -536,8 +536,27 @@ def list_quiz_generations(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[s
         f"/rest/v1/quiz_generations?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={safe_limit}",
     )
     if isinstance(payload, list):
+        for row in payload:
+            quiz_id = str(row.get("id_quiz") or "")
+            if not quiz_id:
+                continue
+            latest_attempt, attempt_status = get_latest_quiz_attempt(user_id=user_id, quiz_id=quiz_id)
+            if attempt_status < 400 and latest_attempt:
+                row["latest_attempt"] = latest_attempt
         return payload, 200
     return [], status_code
+
+
+def get_latest_quiz_attempt(*, user_id: str, quiz_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded_user = quote(user_id, safe="")
+    encoded_quiz = quote(quiz_id, safe="")
+    return _select_one(
+        "/rest/v1/quiz_attempts?select=*"
+        f"&id_user=eq.{encoded_user}"
+        f"&id_quiz=eq.{encoded_quiz}"
+        "&order=updated_at.desc"
+        "&limit=1"
+    )
 
 
 def create_quiz_attempt(
@@ -596,6 +615,31 @@ def delete_quiz_attempt(attempt_id: str) -> Tuple[Dict[str, Any], int]:
     response_payload, response_status = _request(
         "DELETE",
         f"/rest/v1/quiz_attempts?id_attempt=eq.{encoded}",
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else {}), response_status
+    return response_payload, response_status
+
+
+def delete_quiz_attempts_by_quiz(*, user_id: str, quiz_id: str) -> Tuple[List[Dict[str, Any]], int]:
+    encoded_user = quote(user_id, safe="")
+    encoded_quiz = quote(quiz_id, safe="")
+    response_payload, response_status = _request(
+        "DELETE",
+        f"/rest/v1/quiz_attempts?id_user=eq.{encoded_user}&id_quiz=eq.{encoded_quiz}",
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return response_payload, response_status
+    return [], response_status
+
+
+def delete_quiz_generation(quiz_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(quiz_id, safe="")
+    response_payload, response_status = _request(
+        "DELETE",
+        f"/rest/v1/quiz_generations?id_quiz=eq.{encoded}",
         extra_headers={"Prefer": "return=representation"},
     )
     if isinstance(response_payload, list):
