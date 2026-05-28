@@ -95,3 +95,13 @@ class AttemptFinishSerializer(serializers.Serializer):
 
 class AttemptDeleteSerializer(QuizQuerySerializer):
     pass
+
+
+class QuizShareCodeSerializer(serializers.Serializer):
+    share_code = serializers.CharField(
+        max_length=32,
+        error_messages={
+            "required": "Thieu share_code.",
+            "blank": "share_code khong duoc rong.",
+        },
+    )
