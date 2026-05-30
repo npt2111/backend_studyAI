@@ -13,6 +13,8 @@ from .serializers import (
     FlashcardGenerateSerializer,
     FlashcardListQuerySerializer,
     FlashcardQuerySerializer,
+    FlashcardSaveSharedSerializer,
+    FlashcardShareCodeSerializer,
 )
 from .services import (
     calculate_flashcard_progress,
@@ -43,6 +45,19 @@ def _extract_first_error(errors) -> str:
 def _serializer_error_response(serializer, fallback: str):
     message = _extract_first_error(serializer.errors) or fallback
     return Response({"message": message, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+
+def _share_url(request, share_code: str) -> str:
+    base = request.build_absolute_uri("/").rstrip("/")
+    return f"{base}/api/flashcards/share/{share_code}/"
+
+
+def _can_access_flashcard(row, user_id: str) -> bool:
+    flashcard_id = str(row.get("id_flashcard") or "")
+    return str(row.get("id_user")) == user_id or supabase_client.is_flashcard_saved(
+        user_id=user_id,
+        flashcard_id=flashcard_id,
+    )
 
 
 class GenerateFlashcardApiView(APIView):
@@ -142,7 +157,7 @@ class FlashcardDetailApiView(APIView):
                 return Response({"message": "Khong doc duoc flashcard."}, status=status.HTTP_502_BAD_GATEWAY)
             if not row:
                 return Response({"message": "Khong tim thay flashcard."}, status=status.HTTP_404_NOT_FOUND)
-            if str(row.get("id_user")) != user_id:
+            if not _can_access_flashcard(row, user_id):
                 return Response({"message": "Ban khong co quyen xem flashcard nay."}, status=status.HTTP_403_FORBIDDEN)
             return Response({"flashcard": normalize_flashcard(row)}, status=status.HTTP_200_OK)
         except SupabaseConfigError as exc:
@@ -169,6 +184,12 @@ class FlashcardDetailApiView(APIView):
             )
             if attempts_status >= 400:
                 return Response({"message": "Xoa attempt cua flashcard that bai."}, status=status.HTTP_502_BAD_GATEWAY)
+            _, share_status = supabase_client.delete_flashcard_share_by_flashcard(str(flashcard_id))
+            if share_status >= 400:
+                return Response({"message": "Xoa ma chia se cua flashcard that bai."}, status=status.HTTP_502_BAD_GATEWAY)
+            _, saved_status = supabase_client.delete_flashcard_saved_by_flashcard(str(flashcard_id))
+            if saved_status >= 400:
+                return Response({"message": "Xoa flashcard saved that bai."}, status=status.HTTP_502_BAD_GATEWAY)
 
             deleted_row, delete_status = supabase_client.delete_flashcard_generation(str(flashcard_id))
             if delete_status >= 400:
@@ -201,6 +222,127 @@ class FlashcardListApiView(APIView):
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class FlashcardShareApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request, flashcard_id):
+        serializer = FlashcardQuerySerializer(data=request.data)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Du lieu chia se flashcard khong hop le.")
+
+        user_id = str(serializer.validated_data["user_id"])
+        try:
+            row, row_status = supabase_client.get_flashcard_generation(str(flashcard_id))
+            if row_status >= 400:
+                return Response({"message": "Khong doc duoc flashcard."}, status=status.HTTP_502_BAD_GATEWAY)
+            if not row:
+                return Response({"message": "Khong tim thay flashcard."}, status=status.HTTP_404_NOT_FOUND)
+            if str(row.get("id_user")) != user_id:
+                return Response({"message": "Ban khong co quyen chia se flashcard nay."}, status=status.HTTP_403_FORBIDDEN)
+            if str(row.get("status", "")).lower() != "done":
+                return Response({"message": "Flashcard chua san sang de chia se."}, status=status.HTTP_409_CONFLICT)
+
+            share_row, share_status = supabase_client.create_flashcard_share(
+                flashcard_id=str(flashcard_id),
+                user_id=user_id,
+            )
+            if share_status >= 400:
+                return Response({"message": "Tao ma chia se that bai.", "error": share_row}, status=status.HTTP_502_BAD_GATEWAY)
+            share_code = str(share_row.get("share_code") or "").strip()
+            return Response(
+                {
+                    "message": "Tao ma chia se thanh cong.",
+                    "share_code": share_code,
+                    "share_url": _share_url(request, share_code),
+                    "flashcard": normalize_flashcard(row),
+                },
+                status=status.HTTP_200_OK,
+            )
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class FlashcardSharedDetailApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, share_code):
+        serializer = FlashcardShareCodeSerializer(data={"share_code": share_code})
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Ma chia se khong hop le.")
+
+        code = str(serializer.validated_data["share_code"]).strip().lower()
+        try:
+            share_row, share_status = supabase_client.get_flashcard_share_by_code(code)
+            if share_status >= 400:
+                return Response({"message": "Khong doc duoc ma chia se."}, status=status.HTTP_502_BAD_GATEWAY)
+            if not share_row:
+                return Response({"message": "Khong tim thay ma chia se."}, status=status.HTTP_404_NOT_FOUND)
+
+            flashcard_id = str(share_row.get("id_flashcard") or "")
+            row, row_status = supabase_client.get_flashcard_generation(flashcard_id)
+            if row_status >= 400:
+                return Response({"message": "Khong doc duoc flashcard."}, status=status.HTTP_502_BAD_GATEWAY)
+            if not row:
+                return Response({"message": "Flashcard da bi xoa hoac khong ton tai."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"share_code": code, "flashcard": normalize_flashcard(row)}, status=status.HTTP_200_OK)
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class FlashcardSaveSharedApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request, share_code):
+        code_serializer = FlashcardShareCodeSerializer(data={"share_code": share_code})
+        if not code_serializer.is_valid():
+            return _serializer_error_response(code_serializer, "Ma chia se khong hop le.")
+        serializer = FlashcardSaveSharedSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Du lieu luu flashcard khong hop le.")
+
+        code = str(code_serializer.validated_data["share_code"]).strip().lower()
+        user_id = str(serializer.validated_data["user_id"])
+        try:
+            share_row, share_status = supabase_client.get_flashcard_share_by_code(code)
+            if share_status >= 400:
+                return Response({"message": "Khong doc duoc ma chia se."}, status=status.HTTP_502_BAD_GATEWAY)
+            if not share_row:
+                return Response({"message": "Khong tim thay ma chia se."}, status=status.HTTP_404_NOT_FOUND)
+
+            flashcard_id = str(share_row.get("id_flashcard") or "")
+            row, row_status = supabase_client.get_flashcard_generation(flashcard_id)
+            if row_status >= 400:
+                return Response({"message": "Khong doc duoc flashcard."}, status=status.HTTP_502_BAD_GATEWAY)
+            if not row:
+                return Response({"message": "Flashcard da bi xoa hoac khong ton tai."}, status=status.HTTP_404_NOT_FOUND)
+
+            owner = str(row.get("id_user")) == user_id
+            saved = False
+            if not owner:
+                saved_row, saved_status = supabase_client.save_shared_flashcard(
+                    user_id=user_id,
+                    flashcard_id=flashcard_id,
+                    share_code=code,
+                )
+                if saved_status >= 400:
+                    return Response({"message": "Luu flashcard that bai.", "error": saved_row}, status=status.HTTP_502_BAD_GATEWAY)
+                saved = True
+            return Response(
+                {
+                    "share_code": code,
+                    "saved": saved,
+                    "owner": owner,
+                    "flashcard": normalize_flashcard(row),
+                },
+                status=status.HTTP_200_OK,
+            )
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class StartFlashcardAttemptApiView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -218,7 +360,7 @@ class StartFlashcardAttemptApiView(APIView):
                 return Response({"message": "Khong doc duoc flashcard."}, status=status.HTTP_502_BAD_GATEWAY)
             if not flashcard_row:
                 return Response({"message": "Khong tim thay flashcard."}, status=status.HTTP_404_NOT_FOUND)
-            if str(flashcard_row.get("id_user")) != user_id:
+            if not _can_access_flashcard(flashcard_row, user_id):
                 return Response({"message": "Ban khong co quyen hoc flashcard nay."}, status=status.HTTP_403_FORBIDDEN)
 
             cards = flashcard_row.get("cards")
