@@ -658,9 +658,10 @@ def delete_quiz_generation(quiz_id: str) -> Tuple[Dict[str, Any], int]:
     return response_payload, response_status
 
 
-def _random_share_code(length: int = 9) -> str:
+def _random_share_code(length: int = 9, prefix: str = "") -> str:
     alphabet = string.ascii_lowercase + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(length))
+    body_length = max(1, length - len(prefix))
+    return f"{prefix}{''.join(secrets.choice(alphabet) for _ in range(body_length))}"
 
 
 def get_quiz_share_by_quiz(quiz_id: str) -> Tuple[Dict[str, Any], int]:
@@ -679,7 +680,10 @@ def create_quiz_share(*, quiz_id: str, user_id: str) -> Tuple[Dict[str, Any], in
         return existing, 200
 
     for _ in range(6):
-        share_code = _random_share_code()
+        share_code = _random_share_code(prefix="q")
+        flashcard_share, flashcard_status = get_flashcard_share_by_code(share_code)
+        if flashcard_status < 400 and flashcard_share:
+            continue
         payload = {
             "id_quiz": quiz_id,
             "id_user": user_id,
@@ -831,16 +835,25 @@ def list_flashcard_generations(*, user_id: str, limit: int = 20) -> Tuple[List[D
         "GET",
         f"/rest/v1/flashcard_generations?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={safe_limit}",
     )
-    if isinstance(payload, list):
-        for row in payload:
-            flashcard_id = str(row.get("id_flashcard") or "")
-            if not flashcard_id:
-                continue
-            latest_attempt, attempt_status = get_latest_flashcard_attempt(user_id=user_id, flashcard_id=flashcard_id)
-            if attempt_status < 400 and latest_attempt:
-                row["latest_attempt"] = latest_attempt
-        return payload, 200
-    return [], status_code
+    own_rows = payload if isinstance(payload, list) else []
+    saved_rows, saved_status = list_saved_flashcards(user_id=user_id, limit=safe_limit)
+    if status_code >= 400:
+        return [], status_code
+    if saved_status >= 400:
+        saved_rows = []
+    rows: List[Dict[str, Any]] = []
+    seen = set()
+    for row in own_rows + saved_rows:
+        flashcard_id = str(row.get("id_flashcard") or "")
+        if not flashcard_id or flashcard_id in seen:
+            continue
+        seen.add(flashcard_id)
+        latest_attempt, attempt_status = get_latest_flashcard_attempt(user_id=user_id, flashcard_id=flashcard_id)
+        if attempt_status < 400 and latest_attempt:
+            row["latest_attempt"] = latest_attempt
+        rows.append(row)
+    rows.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return rows[:safe_limit], 200
 
 
 def get_latest_flashcard_attempt(*, user_id: str, flashcard_id: str) -> Tuple[Dict[str, Any], int]:
@@ -878,6 +891,121 @@ def delete_flashcard_generation(flashcard_id: str) -> Tuple[Dict[str, Any], int]
     if isinstance(response_payload, list):
         return (response_payload[0] if response_payload else {}), response_status
     return response_payload, response_status
+
+
+def get_flashcard_share_by_flashcard(flashcard_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(flashcard_id, safe="")
+    return _select_one(f"/rest/v1/flashcard_shares?select=*&id_flashcard=eq.{encoded}&limit=1")
+
+
+def get_flashcard_share_by_code(share_code: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(share_code.strip().lower(), safe="")
+    return _select_one(f"/rest/v1/flashcard_shares?select=*&share_code=eq.{encoded}&limit=1")
+
+
+def create_flashcard_share(*, flashcard_id: str, user_id: str) -> Tuple[Dict[str, Any], int]:
+    existing, existing_status = get_flashcard_share_by_flashcard(flashcard_id)
+    if existing_status < 400 and existing:
+        return existing, 200
+
+    for _ in range(6):
+        share_code = _random_share_code(prefix="f")
+        quiz_share, quiz_status = get_quiz_share_by_code(share_code)
+        if quiz_status < 400 and quiz_share:
+            continue
+        payload = {
+            "id_flashcard": flashcard_id,
+            "id_user": user_id,
+            "share_code": share_code,
+        }
+        response_payload, response_status = _request(
+            "POST",
+            "/rest/v1/flashcard_shares",
+            json=payload,
+            extra_headers={"Prefer": "return=representation"},
+        )
+        if isinstance(response_payload, list):
+            return (response_payload[0] if response_payload else payload), response_status
+        if response_status != 409:
+            return response_payload, response_status
+    return {"message": "Khong tao duoc share_code duy nhat."}, 409
+
+
+def is_flashcard_saved(*, user_id: str, flashcard_id: str) -> bool:
+    encoded_user = quote(user_id, safe="")
+    encoded_flashcard = quote(flashcard_id, safe="")
+    row, status_code = _select_one(
+        f"/rest/v1/flashcard_saved?select=*&id_user=eq.{encoded_user}&id_flashcard=eq.{encoded_flashcard}&limit=1"
+    )
+    return status_code < 400 and bool(row)
+
+
+def save_shared_flashcard(*, user_id: str, flashcard_id: str, share_code: str) -> Tuple[Dict[str, Any], int]:
+    encoded_user = quote(user_id, safe="")
+    encoded_flashcard = quote(flashcard_id, safe="")
+    existing, existing_status = _select_one(
+        f"/rest/v1/flashcard_saved?select=*&id_user=eq.{encoded_user}&id_flashcard=eq.{encoded_flashcard}&limit=1"
+    )
+    if existing_status < 400 and existing:
+        return existing, 200
+    payload = {
+        "id_user": user_id,
+        "id_flashcard": flashcard_id,
+        "share_code": share_code,
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/flashcard_saved",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def list_saved_flashcards(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[str, Any]], int]:
+    safe_limit = max(1, min(limit, 100))
+    encoded_user = quote(user_id, safe="")
+    saved_payload, saved_status = _request(
+        "GET",
+        f"/rest/v1/flashcard_saved?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={safe_limit}",
+    )
+    if not isinstance(saved_payload, list):
+        return [], saved_status
+    rows: List[Dict[str, Any]] = []
+    for saved in saved_payload:
+        flashcard_id = str(saved.get("id_flashcard") or "")
+        if not flashcard_id:
+            continue
+        flashcard_row, flashcard_status = get_flashcard_generation(flashcard_id)
+        if flashcard_status < 400 and flashcard_row:
+            rows.append(flashcard_row)
+    return rows, 200
+
+
+def delete_flashcard_share_by_flashcard(flashcard_id: str) -> Tuple[List[Dict[str, Any]], int]:
+    encoded = quote(flashcard_id, safe="")
+    response_payload, response_status = _request(
+        "DELETE",
+        f"/rest/v1/flashcard_shares?id_flashcard=eq.{encoded}",
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return response_payload, response_status
+    return [], response_status
+
+
+def delete_flashcard_saved_by_flashcard(flashcard_id: str) -> Tuple[List[Dict[str, Any]], int]:
+    encoded = quote(flashcard_id, safe="")
+    response_payload, response_status = _request(
+        "DELETE",
+        f"/rest/v1/flashcard_saved?id_flashcard=eq.{encoded}",
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return response_payload, response_status
+    return [], response_status
 
 
 def create_flashcard_attempt(

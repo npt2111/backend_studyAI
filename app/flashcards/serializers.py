@@ -84,3 +84,17 @@ class FlashcardAttemptFinishSerializer(serializers.Serializer):
         }
     )
     elapsed_seconds = serializers.IntegerField(required=False, min_value=0, default=0)
+
+
+class FlashcardShareCodeSerializer(serializers.Serializer):
+    share_code = serializers.CharField(
+        max_length=32,
+        error_messages={
+            "required": "Thieu share_code.",
+            "blank": "share_code khong duoc rong.",
+        },
+    )
+
+
+class FlashcardSaveSharedSerializer(FlashcardQuerySerializer):
+    pass
