@@ -1,10 +1,12 @@
 from rest_framework import status
+import logging
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from config.services import supabase_client
 from config.services.supabase_client import SupabaseConfigError
+from app.documents.rag import ensure_document_chunks_indexed, retrieve_relevant_chunks
 
 from .serializers import ChatMessageSerializer, ChatSessionQuerySerializer, ChatSessionStartSerializer
 from .services import (
@@ -13,6 +15,8 @@ from .services import (
     normalize_chat_message,
     normalize_chat_session,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_first_error(errors) -> str:
@@ -192,11 +196,26 @@ class SendDocumentChatMessageApiView(APIView):
                 return Response({"message": "Luu tin nhan that bai.", "error": user_row}, status=status.HTTP_502_BAD_GATEWAY)
 
             try:
+                try:
+                    ensure_document_chunks_indexed(
+                        user_id=user_id,
+                        read_id=read_id,
+                        source_text=str(read_row.get("extracted_text") or ""),
+                    )
+                    context_chunks = retrieve_relevant_chunks(
+                        user_id=user_id,
+                        read_id=read_id,
+                        query=user_message,
+                    )
+                except Exception as exc:
+                    logger.warning("Document RAG retrieval failed for session_id=%s: %s", session_id, exc)
+                    context_chunks = []
                 reply = generate_document_chat_reply(
                     source_text=str(read_row.get("extracted_text") or ""),
                     file_name=str(read_row.get("file_name") or session_row.get("file_name") or "Document"),
                     history=history_rows,
                     user_message=user_message,
+                    context_chunks=context_chunks,
                 )
                 assistant_row, assistant_status = supabase_client.create_document_chat_message(
                     session_id=session_id,

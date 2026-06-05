@@ -1,4 +1,5 @@
 ﻿from pathlib import Path
+import logging
 from typing import Dict
 from uuid import uuid4
 
@@ -20,8 +21,10 @@ from .services import (
     _validate_readable_text,
     normalize_read_result,
 )
+from .rag import index_document_chunks
 
 ALLOWED_EXTS = {".pdf", ".docx"}
+logger = logging.getLogger(__name__)
 
 
 def _extract_first_error(errors) -> str:
@@ -142,6 +145,14 @@ class UploadDocumentApiView(APIView):
                         {"message": "Luu ket qua doc file that bai.", "error": read_row},
                         status=status.HTTP_502_BAD_GATEWAY,
                     )
+                try:
+                    index_document_chunks(
+                        user_id=user_id,
+                        read_id=read_id,
+                        source_text=extracted_text,
+                    )
+                except Exception as exc:
+                    logger.warning("Document RAG indexing failed for read_id=%s: %s", read_id, exc)
                 try:
                     supabase_client.create_study_activity(
                         user_id=user_id,

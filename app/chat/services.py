@@ -53,6 +53,7 @@ def generate_document_chat_reply(
     file_name: str,
     history: List[Dict[str, Any]],
     user_message: str,
+    context_chunks: List[Dict[str, Any]] = None,
 ) -> str:
     api_key = str(getattr(settings, "GEMINI_API_KEY", "") or "").strip()
     if not api_key:
@@ -61,7 +62,16 @@ def generate_document_chat_reply(
     source = (source_text or "").strip()
     if not source:
         raise RuntimeError("Khong co extracted_text de chat voi tai lieu.")
-    source = source[: int(getattr(settings, "CHAT_SOURCE_MAX_CHARS", 18000))]
+    context_chunks = context_chunks or []
+    if context_chunks:
+        context_blocks = []
+        for index, chunk in enumerate(context_chunks, start=1):
+            content = str(chunk.get("content") or "").strip()
+            if content:
+                context_blocks.append(f"[Doan {index}]\n{content}")
+        source_context = "\n\n".join(context_blocks).strip()
+    else:
+        source_context = source[: int(getattr(settings, "CHAT_SOURCE_MAX_CHARS", 18000))]
 
     history_lines: List[str] = []
     for item in history[-int(getattr(settings, "CHAT_HISTORY_LIMIT", 12)):]:
@@ -74,7 +84,7 @@ def generate_document_chat_reply(
 Ten tai lieu: {file_name or "Document"}
 
 NOI DUNG TAI LIEU:
-{source}
+{source_context}
 
 LICH SU CHAT GAN DAY:
 {chr(10).join(history_lines) if history_lines else "Chua co."}
