@@ -479,6 +479,96 @@ def delete_document_read_result(read_id: str) -> Tuple[Dict[str, Any], int]:
     return response_payload, response_status
 
 
+def delete_document_chunks_by_read(read_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(read_id, safe="")
+    response_payload, response_status = _request(
+        "DELETE",
+        f"/rest/v1/document_chunks?id_read=eq.{encoded}",
+        extra_headers={"Prefer": "return=minimal"},
+    )
+    if isinstance(response_payload, list):
+        return {"deleted": len(response_payload)}, response_status
+    return response_payload, response_status
+
+
+def create_document_chunk(
+    *,
+    user_id: str,
+    read_id: str,
+    chunk_index: int,
+    content: str,
+    embedding: List[float],
+    token_count: int,
+) -> Tuple[Dict[str, Any], int]:
+    embedding_text = "[" + ",".join(str(float(value)) for value in embedding) + "]"
+    payload: Dict[str, Any] = {
+        "id_user": user_id,
+        "id_read": read_id,
+        "chunk_index": int(chunk_index),
+        "content": content,
+        "embedding": embedding_text,
+        "token_count": max(0, int(token_count or 0)),
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/document_chunks",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def count_document_chunks_by_read(*, user_id: str, read_id: str) -> Tuple[int, int]:
+    encoded_user = quote(user_id, safe="")
+    encoded_read = quote(read_id, safe="")
+    payload, status_code, headers = _request_raw(
+        "GET",
+        "/rest/v1/document_chunks?select=id_chunk"
+        f"&id_user=eq.{encoded_user}"
+        f"&id_read=eq.{encoded_read}"
+        "&limit=1",
+        extra_headers={"Prefer": "count=exact"},
+    )
+    if status_code >= 400:
+        return 0, status_code
+
+    content_range = headers.get("Content-Range") or headers.get("content-range") or ""
+    total_text = content_range.rsplit("/", 1)[-1].strip()
+    if total_text.isdigit():
+        return int(total_text), 200
+    if isinstance(payload, list):
+        return len(payload), 200
+    return 0, status_code
+
+
+def match_document_chunks(
+    *,
+    user_id: str,
+    read_id: str,
+    query_embedding: List[float],
+    match_count: int = 5,
+    match_threshold: float = 0.2,
+) -> Tuple[List[Dict[str, Any]], int]:
+    embedding_text = "[" + ",".join(str(float(value)) for value in query_embedding) + "]"
+    payload: Dict[str, Any] = {
+        "p_user_id": user_id,
+        "p_read_id": read_id,
+        "query_embedding": embedding_text,
+        "match_count": max(1, min(int(match_count or 5), 20)),
+        "match_threshold": float(match_threshold),
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/rpc/match_document_chunks",
+        json=payload,
+    )
+    if isinstance(response_payload, list):
+        return response_payload, response_status
+    return [], response_status
+
+
 def create_quiz_generation(
     *,
     user_id: str,
