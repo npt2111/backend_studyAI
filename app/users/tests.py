@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import jwt
 from django.conf import settings
+from django.contrib.auth.hashers import check_password, make_password
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -37,20 +38,23 @@ class UsersAuthApiTests(APITestCase):
 
         with patch("app.users.views.supabase_client.get_user_by_email", return_value=({}, 200)), patch(
             "app.users.views.supabase_client.create_user", return_value=(created_row, 201)
-        ):
+        ) as create_user:
             response = self.client.post("/api/users/register/", payload, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIn("tokens", response.data)
         self.assertTrue(response.data["tokens"]["access"])
         self.assertEqual(response.data["user"]["full_name"], "Student One")
+        saved_password = create_user.call_args.kwargs["password_value"]
+        self.assertNotEqual(saved_password, "mypassword123")
+        self.assertTrue(check_password("mypassword123", saved_password))
 
     def test_login_success(self):
         user_row = {
             "id_user": "uid-2",
             "email_user": "student@example.com",
             "full_name_user": "Student One",
-            "password_user": "mypassword123",
+            "password_user": make_password("mypassword123"),
         }
 
         with patch("app.users.views.supabase_client.get_user_by_email", return_value=(user_row, 200)):
@@ -64,6 +68,28 @@ class UsersAuthApiTests(APITestCase):
         self.assertIn("tokens", response.data)
         self.assertTrue(response.data["tokens"]["access"])
         self.assertEqual(response.data["user"]["full_name"], "Student One")
+
+    def test_login_plain_password_migrates_to_hash(self):
+        user_row = {
+            "id_user": "uid-legacy",
+            "email_user": "legacy@example.com",
+            "full_name_user": "Legacy User",
+            "password_user": "oldpassword123",
+        }
+
+        with patch("app.users.views.supabase_client.get_user_by_email", return_value=(user_row, 200)), patch(
+            "app.users.views.supabase_client.update_user_profile", return_value=(user_row, 200)
+        ) as update_user:
+            response = self.client.post(
+                "/api/users/login/",
+                {"email": "legacy@example.com", "password": "oldpassword123"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        saved_password = update_user.call_args.args[1]["password_user"]
+        self.assertNotEqual(saved_password, "oldpassword123")
+        self.assertTrue(check_password("oldpassword123", saved_password))
 
     def test_me_requires_authentication(self):
         response = self.client.get("/api/users/me/")

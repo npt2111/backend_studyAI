@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import jwt
 from django.conf import settings
+from django.contrib.auth.hashers import check_password, identify_hasher, make_password
 from jwt import ExpiredSignatureError, InvalidTokenError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework import status
@@ -179,6 +180,40 @@ def _is_duplicate_email_error(payload: Dict) -> bool:
     return False
 
 
+def _is_hashed_password(value: str) -> bool:
+    if not value:
+        return False
+    try:
+        identify_hasher(value)
+        return True
+    except ValueError:
+        return False
+
+
+def _hash_password(raw_password: str) -> str:
+    return make_password(raw_password)
+
+
+def _verify_password(raw_password: str, stored_password: str) -> bool:
+    if not raw_password or not stored_password:
+        return False
+    if _is_hashed_password(stored_password):
+        return check_password(raw_password, stored_password)
+    return stored_password == raw_password
+
+
+def _upgrade_plain_password_if_needed(user_id: str, raw_password: str, stored_password: str) -> None:
+    if not stored_password or _is_hashed_password(stored_password):
+        return
+    try:
+        supabase_client.update_user_profile(
+            str(user_id),
+            {"password_user": _hash_password(raw_password)},
+        )
+    except Exception:
+        pass
+
+
 class RegisterApiView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -205,7 +240,7 @@ class RegisterApiView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            password_value = data["password"]
+            password_value = _hash_password(data["password"])
             created_row, created_status = supabase_client.create_user(
                 full_name=full_name,
                 email=email,
@@ -296,7 +331,7 @@ class LoginApiView(APIView):
             )
 
         stored_password = user_row.get("password_user") or ""
-        valid_password = bool(stored_password) and (stored_password == raw_password)
+        valid_password = _verify_password(raw_password, stored_password)
 
         if not valid_password:
             return Response(
@@ -314,6 +349,7 @@ class LoginApiView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+        _upgrade_plain_password_if_needed(str(profile.get("id")), raw_password, stored_password)
         tokens = _create_tokens(profile)
         return Response(
             {
@@ -538,7 +574,7 @@ class ChangePasswordApiView(APIView):
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         stored_password = user_row.get("password_user") or ""
-        if stored_password != data["current_password"]:
+        if not _verify_password(data["current_password"], stored_password):
             return Response(
                 {
                     "message": "Mat khau hien tai khong dung.",
@@ -550,7 +586,7 @@ class ChangePasswordApiView(APIView):
         try:
             updated_row, update_status = supabase_client.update_user_profile(
                 str(user_id),
-                {"password_user": data["new_password"]},
+                {"password_user": _hash_password(data["new_password"])},
             )
         except SupabaseConfigError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
