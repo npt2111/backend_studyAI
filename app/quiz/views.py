@@ -1,3 +1,6 @@
+import logging
+
+from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -5,6 +8,7 @@ from rest_framework.views import APIView
 
 from config.services import supabase_client
 from config.services.supabase_client import SupabaseConfigError
+from app.documents.rag import build_ai_generation_context
 
 from .serializers import (
     AttemptAnswerSerializer,
@@ -25,6 +29,8 @@ from .services import (
     normalize_attempt,
     normalize_quiz,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_first_error(errors) -> str:
@@ -89,11 +95,24 @@ class GenerateQuizApiView(APIView):
             source_text = str(read_row.get("extracted_text") or "").strip()
             if not source_text:
                 return Response({"message": "File khong co extracted_text de tao quiz."}, status=status.HTTP_400_BAD_REQUEST)
+            file_name = str(read_row.get("file_name") or "Document")
+            ai_source_text = source_text
+            try:
+                ai_source_text = build_ai_generation_context(
+                    user_id=user_id,
+                    read_id=read_id,
+                    source_text=source_text,
+                    file_name=file_name,
+                    purpose="quiz",
+                    max_chars=int(getattr(settings, "QUIZ_SOURCE_MAX_CHARS", 16000)),
+                )
+            except Exception as exc:
+                logger.warning("Quiz AI context fallback for read_id=%s: %s", read_id, exc)
 
             quiz_row, quiz_status = supabase_client.create_quiz_generation(
                 user_id=user_id,
                 read_id=read_id,
-                file_name=str(read_row.get("file_name") or "Document"),
+                file_name=file_name,
                 quiz_type=quiz_type,
                 difficulty=difficulty,
                 question_count=question_count,
@@ -107,7 +126,7 @@ class GenerateQuizApiView(APIView):
 
             try:
                 result = generate_quiz_questions(
-                    source_text=source_text,
+                    source_text=ai_source_text,
                     quiz_type=quiz_type,
                     difficulty=difficulty,
                     question_count=question_count,

@@ -1,3 +1,6 @@
+import logging
+
+from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -5,9 +8,12 @@ from rest_framework.views import APIView
 
 from config.services import supabase_client
 from config.services.supabase_client import SupabaseConfigError
+from app.documents.rag import build_ai_generation_context
 
 from .serializers import MindmapGenerateSerializer
 from .services import generate_mindmap, normalize_mindmap
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_first_error(errors) -> str:
@@ -62,13 +68,26 @@ class GenerateMindmapApiView(APIView):
             source_text = str(read_row.get("extracted_text") or "").strip()
             if not source_text:
                 return Response({"message": "File khong co extracted_text de tao mindmap."}, status=status.HTTP_400_BAD_REQUEST)
+            file_name = str(read_row.get("file_name") or "Document")
+            ai_source_text = source_text
+            try:
+                ai_source_text = build_ai_generation_context(
+                    user_id=user_id,
+                    read_id=read_id,
+                    source_text=source_text,
+                    file_name=file_name,
+                    purpose="mindmap",
+                    max_chars=int(getattr(settings, "MINDMAP_SOURCE_MAX_CHARS", 18000)),
+                )
+            except Exception as exc:
+                logger.warning("Mindmap AI context fallback for read_id=%s: %s", read_id, exc)
 
             mindmap_row = cached_row if cached_row else None
             if not mindmap_row:
                 mindmap_row, create_status = supabase_client.create_mindmap(
                     user_id=user_id,
                     read_id=read_id,
-                    file_name=str(read_row.get("file_name") or "Document"),
+                    file_name=file_name,
                 )
                 if create_status >= 400:
                     return Response({"message": "Tao mindmap record that bai.", "error": mindmap_row}, status=status.HTTP_502_BAD_GATEWAY)
@@ -86,8 +105,8 @@ class GenerateMindmapApiView(APIView):
                     },
                 )
                 result = generate_mindmap(
-                    source_text=source_text,
-                    file_name=str(read_row.get("file_name") or "Document"),
+                    source_text=ai_source_text,
+                    file_name=file_name,
                 )
                 mindmap_row, update_status = supabase_client.update_mindmap(
                     mindmap_id,

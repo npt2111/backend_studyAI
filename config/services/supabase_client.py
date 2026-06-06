@@ -543,6 +543,50 @@ def count_document_chunks_by_read(*, user_id: str, read_id: str) -> Tuple[int, i
     return 0, status_code
 
 
+def get_document_summary_by_read(*, user_id: str, read_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded_user = quote(user_id, safe="")
+    encoded_read = quote(read_id, safe="")
+    return _select_one(
+        "/rest/v1/document_summaries?select=*"
+        f"&id_user=eq.{encoded_user}"
+        f"&id_read=eq.{encoded_read}"
+        "&limit=1"
+    )
+
+
+def upsert_document_summary(
+    *,
+    user_id: str,
+    read_id: str,
+    file_name: str,
+    summary: str,
+    key_points: List[str],
+    raw_response: str = "",
+    status: str = "done",
+    error_message: str = "",
+) -> Tuple[Dict[str, Any], int]:
+    payload: Dict[str, Any] = {
+        "id_user": user_id,
+        "id_read": read_id,
+        "file_name": file_name,
+        "summary": summary,
+        "key_points": key_points,
+        "raw_response": raw_response,
+        "status": status,
+        "error_message": error_message or None,
+        "updated_at": _now_iso(),
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/document_summaries?on_conflict=id_read",
+        json=payload,
+        extra_headers={"Prefer": "resolution=merge-duplicates,return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
 def match_document_chunks(
     *,
     user_id: str,

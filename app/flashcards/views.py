@@ -1,3 +1,6 @@
+import logging
+
+from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -5,6 +8,7 @@ from rest_framework.views import APIView
 
 from config.services import supabase_client
 from config.services.supabase_client import SupabaseConfigError
+from app.documents.rag import build_ai_generation_context
 
 from .serializers import (
     FlashcardAttemptFinishSerializer,
@@ -22,6 +26,8 @@ from .services import (
     normalize_flashcard,
     normalize_flashcard_attempt,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_first_error(errors) -> str:
@@ -88,11 +94,24 @@ class GenerateFlashcardApiView(APIView):
             source_text = str(read_row.get("extracted_text") or "").strip()
             if not source_text:
                 return Response({"message": "File khong co extracted_text de tao flashcard."}, status=status.HTTP_400_BAD_REQUEST)
+            file_name = str(read_row.get("file_name") or "Document")
+            ai_source_text = source_text
+            try:
+                ai_source_text = build_ai_generation_context(
+                    user_id=user_id,
+                    read_id=read_id,
+                    source_text=source_text,
+                    file_name=file_name,
+                    purpose="flashcard",
+                    max_chars=int(getattr(settings, "QUIZ_SOURCE_MAX_CHARS", 16000)),
+                )
+            except Exception as exc:
+                logger.warning("Flashcard AI context fallback for read_id=%s: %s", read_id, exc)
 
             flashcard_row, flashcard_status = supabase_client.create_flashcard_generation(
                 user_id=user_id,
                 read_id=read_id,
-                file_name=str(read_row.get("file_name") or "Document"),
+                file_name=file_name,
                 difficulty=difficulty,
                 card_count=card_count,
             )
@@ -105,7 +124,7 @@ class GenerateFlashcardApiView(APIView):
 
             try:
                 result = generate_flashcards(
-                    source_text=source_text,
+                    source_text=ai_source_text,
                     difficulty=difficulty,
                     card_count=card_count,
                 )
