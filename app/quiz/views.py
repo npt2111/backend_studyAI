@@ -22,6 +22,7 @@ from .serializers import (
     QuizShareCodeSerializer,
 )
 from .services import (
+    build_learning_recommendations,
     build_attempt_answer,
     calculate_attempt_stats,
     generate_quiz_questions,
@@ -509,7 +510,19 @@ class FinishQuizAttemptApiView(APIView):
                 )
             except Exception:
                 pass
-            return Response({"attempt": normalize_attempt(updated_row)}, status=status.HTTP_200_OK)
+            quiz_row, quiz_status = supabase_client.get_quiz_generation(str(attempt_row.get("id_quiz")))
+            insights = {}
+            if quiz_status < 400 and quiz_row:
+                insights = build_learning_recommendations(quiz_row=quiz_row, attempt_row=updated_row)
+            return Response(
+                {
+                    "attempt": normalize_attempt(updated_row),
+                    "recommendations": insights.get("recommendations", []),
+                    "wrong_questions": insights.get("wrong_questions", []),
+                    "accuracy_percent": insights.get("accuracy_percent", 0),
+                },
+                status=status.HTTP_200_OK,
+            )
         except SupabaseConfigError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
