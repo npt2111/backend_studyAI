@@ -141,31 +141,31 @@ def build_learning_recommendations(
         recommendations.append(
             {
                 "type": "retake_quiz",
-                "title": "Lam lai quiz",
-                "message": "Diem duoi 50%, ban nen lam lai quiz de cung co kien thuc.",
+                "title": "Làm lại quiz",
+                "message": "Điểm của bạn dưới 50%, hãy làm lại quiz để củng cố kiến thức.",
             }
         )
         recommendations.append(
             {
                 "type": "create_flashcard",
-                "title": "Tao flashcard on tap",
-                "message": "Hay tao flashcard tu tai lieu nay de ghi nho cac y con yeu.",
+                "title": "Tạo flashcard ôn tập",
+                "message": "Bạn có thể tạo flashcard từ tài liệu này để ghi nhớ tốt hơn các phần còn yếu.",
             }
         )
     if completion < 80:
         recommendations.append(
             {
                 "type": "continue_learning",
-                "title": "Tiep tuc hoc",
-                "message": "Ban chua hoan thanh het quiz, nen tiep tuc hoc cac cau con lai.",
+                "title": "Tiếp tục học",
+                "message": "Bạn chưa hoàn thành hết quiz, hãy tiếp tục học để không bỏ sót nội dung quan trọng.",
             }
         )
     if wrong_questions:
         recommendations.append(
             {
                 "type": "review_wrong_questions",
-                "title": "On lai cau sai",
-                "message": f"Ban sai {len(wrong_questions)} cau. Hay xem lai danh sach cau sai va phan giai thich.",
+                "title": "Ôn lại câu sai",
+                "message": f"Bạn sai {len(wrong_questions)} câu. Hãy xem lại danh sách câu sai và phần giải thích.",
             }
         )
 
@@ -173,8 +173,8 @@ def build_learning_recommendations(
         recommendations.append(
             {
                 "type": "keep_practicing",
-                "title": "Duy tri luyen tap",
-                "message": "Ket qua tot. Ban co the tao quiz kho hon hoac tiep tuc on tap bang flashcard.",
+                "title": "Duy trì luyện tập",
+                "message": "Kết quả của bạn khá tốt. Bạn có thể thử quiz khó hơn hoặc tiếp tục ôn tập bằng flashcard.",
             }
         )
 
