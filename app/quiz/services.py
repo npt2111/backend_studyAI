@@ -107,6 +107,84 @@ def calculate_attempt_stats(answers: List[Dict[str, Any]], total_questions: int)
     }
 
 
+def build_learning_recommendations(
+    *,
+    quiz_row: Dict[str, Any],
+    attempt_row: Dict[str, Any],
+) -> Dict[str, Any]:
+    answers = attempt_row.get("answers") if isinstance(attempt_row.get("answers"), list) else []
+    questions = quiz_row.get("questions") if isinstance(quiz_row.get("questions"), list) else []
+    total = int(attempt_row.get("total_questions") or len(questions) or 0)
+    correct = int(attempt_row.get("correct_count") or 0)
+    completion = float(attempt_row.get("completion_percent") or 0)
+    accuracy = round((correct / max(total, 1)) * 100, 2)
+
+    wrong_questions: List[Dict[str, Any]] = []
+    for answer in answers:
+        if not isinstance(answer, dict) or bool(answer.get("is_correct")):
+            continue
+        index = int(answer.get("question_index", -1))
+        question = questions[index] if 0 <= index < len(questions) and isinstance(questions[index], dict) else {}
+        wrong_questions.append(
+            {
+                "question_index": index,
+                "question_number": int(answer.get("question_number") or index + 1),
+                "question": str(question.get("question") or ""),
+                "selected_answer": str(answer.get("selected_answer") or ""),
+                "correct_answer": str(answer.get("correct_answer") or ""),
+                "explanation": str(question.get("explanation") or ""),
+            }
+        )
+
+    recommendations: List[Dict[str, str]] = []
+    if accuracy < 50:
+        recommendations.append(
+            {
+                "type": "retake_quiz",
+                "title": "Lam lai quiz",
+                "message": "Diem duoi 50%, ban nen lam lai quiz de cung co kien thuc.",
+            }
+        )
+        recommendations.append(
+            {
+                "type": "create_flashcard",
+                "title": "Tao flashcard on tap",
+                "message": "Hay tao flashcard tu tai lieu nay de ghi nho cac y con yeu.",
+            }
+        )
+    if completion < 80:
+        recommendations.append(
+            {
+                "type": "continue_learning",
+                "title": "Tiep tuc hoc",
+                "message": "Ban chua hoan thanh het quiz, nen tiep tuc hoc cac cau con lai.",
+            }
+        )
+    if wrong_questions:
+        recommendations.append(
+            {
+                "type": "review_wrong_questions",
+                "title": "On lai cau sai",
+                "message": f"Ban sai {len(wrong_questions)} cau. Hay xem lai danh sach cau sai va phan giai thich.",
+            }
+        )
+
+    if not recommendations:
+        recommendations.append(
+            {
+                "type": "keep_practicing",
+                "title": "Duy tri luyen tap",
+                "message": "Ket qua tot. Ban co the tao quiz kho hon hoac tiep tuc on tap bang flashcard.",
+            }
+        )
+
+    return {
+        "accuracy_percent": accuracy,
+        "recommendations": recommendations,
+        "wrong_questions": wrong_questions,
+    }
+
+
 def generate_quiz_questions(
     *,
     source_text: str,
