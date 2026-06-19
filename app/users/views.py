@@ -596,7 +596,7 @@ class UserProfileApiView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        if not updated_row:
+        if not updated_row or not updated_row.get("id_user"):
             updated_row, error_response = _read_user_by_id(str(user_id))
             if error_response:
                 return error_response
@@ -666,7 +666,7 @@ class UserAvatarApiView(APIView):
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
 
-            if not updated_row:
+            if not updated_row or not updated_row.get("id_user"):
                 updated_row, error_response = _read_user_by_id(str(user_id))
                 if error_response:
                     return error_response
