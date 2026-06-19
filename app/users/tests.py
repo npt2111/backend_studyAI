@@ -227,3 +227,52 @@ class UsersAuthApiTests(APITestCase):
         self.assertEqual(response.data["user"]["id"], user_id)
         self.assertEqual(response.data["user"]["avatar_url"], avatar_url)
         get_user.assert_called_once_with(user_id)
+
+    def test_forgot_password_sends_reset_email_for_existing_user(self):
+        user_row = {
+            "id_user": "00000000-0000-0000-0000-000000000003",
+            "email_user": "reset@example.com",
+            "full_name_user": "Reset User",
+        }
+
+        with patch("app.users.views.supabase_client.get_user_by_email", return_value=(user_row, 200)), patch(
+            "app.users.views.send_mail", return_value=1
+        ) as send_mail:
+            response = self.client.post(
+                "/api/users/password-reset/request/",
+                {"email": "reset@example.com"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("lien ket dat lai mat khau", response.data["message"])
+        self.assertEqual(send_mail.call_args.kwargs["recipient_list"], ["reset@example.com"])
+        self.assertIn("/api/users/password-reset/confirm/?token=", send_mail.call_args.kwargs["message"])
+
+    def test_reset_password_confirm_updates_hashed_password(self):
+        from app.users.views import _make_password_reset_token
+
+        user_row = {
+            "id_user": "00000000-0000-0000-0000-000000000004",
+            "email_user": "reset-confirm@example.com",
+            "password_user": make_password("oldpassword123"),
+        }
+        token = _make_password_reset_token(user_row)
+
+        with patch("app.users.views.supabase_client.get_user_by_id", return_value=(user_row, 200)), patch(
+            "app.users.views.supabase_client.update_user_profile", return_value=({"id_user": user_row["id_user"]}, 200)
+        ) as update_user:
+            response = self.client.post(
+                "/api/users/password-reset/confirm/",
+                {
+                    "token": token,
+                    "new_password": "newpassword123",
+                    "confirm_password": "newpassword123",
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        saved_password = update_user.call_args.args[1]["password_user"]
+        self.assertNotEqual(saved_password, "newpassword123")
+        self.assertTrue(check_password("newpassword123", saved_password))
