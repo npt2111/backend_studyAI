@@ -1,4 +1,6 @@
 import json
+import smtplib
+import socket
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict
@@ -285,6 +287,23 @@ def _password_reset_html(token: str, message: str = "", is_error: bool = False) 
 </body>
 </html>
 """
+
+
+def _email_error_message(exc: Exception) -> str:
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return (
+            "Gmail SMTP tu choi dang nhap. Hay kiem tra EMAIL_HOST_USER va "
+            "EMAIL_HOST_PASSWORD phai la Google App Password 16 ky tu."
+        )
+    if isinstance(exc, (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, TimeoutError, socket.timeout)):
+        return "Khong ket noi duoc Gmail SMTP. Hay kiem tra mang, EMAIL_HOST, EMAIL_PORT va EMAIL_USE_TLS."
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return "Dia chi email nguoi nhan bi Gmail tu choi."
+    if isinstance(exc, smtplib.SMTPSenderRefused):
+        return "Dia chi nguoi gui bi Gmail tu choi. DEFAULT_FROM_EMAIL nen trung voi EMAIL_HOST_USER."
+    if isinstance(exc, smtplib.SMTPException):
+        return f"Gmail SMTP loi: {exc}"
+    return f"Khong gui duoc email dat lai mat khau: {exc}"
 
 
 def _firebase_app():
@@ -784,6 +803,11 @@ class ForgotPasswordApiView(APIView):
         )
 
         try:
+            if not getattr(settings, "EMAIL_HOST_USER", "") or not getattr(settings, "EMAIL_HOST_PASSWORD", ""):
+                return Response(
+                    {"message": "Backend chua cau hinh EMAIL_HOST_USER hoac EMAIL_HOST_PASSWORD."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
             connection = get_connection(timeout=getattr(settings, "EMAIL_TIMEOUT", 10))
             send_mail(
                 subject=subject,
@@ -795,7 +819,7 @@ class ForgotPasswordApiView(APIView):
             )
         except Exception as exc:
             return Response(
-                {"message": "Khong gui duoc email dat lai mat khau.", "error": str(exc)},
+                {"message": _email_error_message(exc), "error": str(exc)},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
