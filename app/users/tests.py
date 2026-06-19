@@ -4,6 +4,7 @@ from unittest.mock import patch
 import jwt
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -160,3 +161,69 @@ class UsersAuthApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["email"], "student@example.com")
+
+    def test_profile_update_refetches_when_patch_response_has_no_user_id(self):
+        user_id = "00000000-0000-0000-0000-000000000001"
+        refetched_row = {
+            "id_user": user_id,
+            "email_user": "student@example.com",
+            "full_name_user": "Student Updated",
+            "avatar_url": "https://example.com/avatar.jpg",
+        }
+
+        with patch(
+            "app.users.views.supabase_client.update_user_profile",
+            return_value=({"full_name_user": "Student Updated"}, 200),
+        ), patch(
+            "app.users.views.supabase_client.get_user_by_id",
+            return_value=(refetched_row, 200),
+        ) as get_user:
+            response = self.client.patch(
+                f"/api/users/{user_id}/",
+                {"full_name": "Student Updated", "email": "student@example.com"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id"], user_id)
+        self.assertEqual(response.data["avatar_url"], "https://example.com/avatar.jpg")
+        get_user.assert_called_once_with(user_id)
+
+    def test_avatar_upload_refetches_when_patch_response_has_no_user_id(self):
+        user_id = "00000000-0000-0000-0000-000000000002"
+        avatar_url = "https://example.com/avatar-new.jpg"
+        refetched_row = {
+            "id_user": user_id,
+            "email_user": "student@example.com",
+            "full_name_user": "Student One",
+            "avatar_url": avatar_url,
+        }
+        upload = SimpleUploadedFile(
+            "avatar.jpg",
+            b"fake-image-bytes",
+            content_type="image/jpeg",
+        )
+
+        with patch(
+            "app.users.views.supabase_client.upload_storage_file",
+            return_value=({"ok": True}, 200),
+        ), patch(
+            "app.users.views.supabase_client.public_storage_url",
+            return_value=avatar_url,
+        ), patch(
+            "app.users.views.supabase_client.update_user_profile",
+            return_value=({"avatar_url": avatar_url}, 200),
+        ), patch(
+            "app.users.views.supabase_client.get_user_by_id",
+            return_value=(refetched_row, 200),
+        ) as get_user:
+            response = self.client.post(
+                f"/api/users/{user_id}/avatar/",
+                {"file": upload},
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["user"]["id"], user_id)
+        self.assertEqual(response.data["user"]["avatar_url"], avatar_url)
+        get_user.assert_called_once_with(user_id)
