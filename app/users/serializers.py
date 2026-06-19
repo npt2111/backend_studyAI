@@ -145,3 +145,46 @@ class ChangePasswordSerializer(serializers.Serializer):
                 {"confirm_password": ["Xac nhan mat khau khong trung khop."]}
             )
         return attrs
+
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField(
+        error_messages={
+            "required": "Vui long nhap email.",
+            "blank": "Vui long nhap email.",
+            "invalid": "Email khong hop le.",
+        }
+    )
+
+    def validate_email(self, value):
+        return value.strip().lower()
+
+
+class ResetPasswordSerializer(serializers.Serializer):
+    token = serializers.CharField(
+        error_messages={
+            "required": "Thieu ma xac thuc.",
+            "blank": "Thieu ma xac thuc.",
+        }
+    )
+    new_password = serializers.CharField(
+        min_length=6,
+        error_messages={
+            "required": "Vui long nhap mat khau moi.",
+            "blank": "Vui long nhap mat khau moi.",
+            "min_length": "Mat khau moi phai co it nhat 6 ky tu.",
+        },
+    )
+    confirm_password = serializers.CharField(
+        error_messages={
+            "required": "Vui long xac nhan mat khau moi.",
+            "blank": "Vui long xac nhan mat khau moi.",
+        }
+    )
+
+    def validate(self, attrs):
+        if attrs["new_password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": ["Xac nhan mat khau khong trung khop."]}
+            )
+        return attrs

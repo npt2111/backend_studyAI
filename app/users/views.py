@@ -8,6 +8,10 @@ import firebase_admin
 import jwt
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, identify_hasher, make_password
+from django.core.mail import send_mail
+from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
+from django.http import HttpResponse
+from django.urls import reverse
 from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials as firebase_credentials
 from firebase_admin import exceptions as firebase_exceptions
@@ -21,7 +25,7 @@ from rest_framework.views import APIView
 from config.services import supabase_client
 from config.services.supabase_client import SupabaseConfigError
 
-from .serializers import ChangePasswordSerializer, GoogleLoginSerializer, LoginSerializer, RefreshTokenSerializer, RegisterSerializer, UpdateProfileSerializer
+from .serializers import ChangePasswordSerializer, ForgotPasswordSerializer, GoogleLoginSerializer, LoginSerializer, RefreshTokenSerializer, RegisterSerializer, ResetPasswordSerializer, UpdateProfileSerializer
 
 
 def _extract_first_error(errors) -> str:
@@ -217,6 +221,70 @@ def _upgrade_plain_password_if_needed(user_id: str, raw_password: str, stored_pa
         )
     except Exception:
         pass
+
+
+def _reset_signer() -> TimestampSigner:
+    return TimestampSigner(salt="studyassistant.password-reset")
+
+
+def _make_password_reset_token(user_row: Dict) -> str:
+    payload = {
+        "id_user": user_row.get("id_user"),
+        "email_user": user_row.get("email_user"),
+    }
+    return _reset_signer().sign_object(payload)
+
+
+def _read_password_reset_token(token: str) -> Dict:
+    max_age = getattr(settings, "PASSWORD_RESET_TOKEN_MINUTES", 30) * 60
+    return _reset_signer().unsign_object(token, max_age=max_age)
+
+
+def _password_reset_link(request, token: str) -> str:
+    path = reverse("users-password-reset-confirm")
+    if getattr(settings, "BACKEND_PUBLIC_URL", ""):
+        return f"{settings.BACKEND_PUBLIC_URL}{path}?token={token}"
+    return request.build_absolute_uri(f"{path}?token={token}")
+
+
+def _password_reset_html(token: str, message: str = "", is_error: bool = False) -> str:
+    color = "#dc2626" if is_error else "#0e62cf"
+    return f"""
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dat lai mat khau</title>
+  <style>
+    body {{ margin:0; font-family:Arial, sans-serif; background:#f5f7ff; color:#111827; }}
+    .wrap {{ min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }}
+    .card {{ width:100%; max-width:420px; background:#fff; border-radius:18px; padding:28px; box-shadow:0 18px 45px rgba(15,23,42,.12); }}
+    h1 {{ margin:0 0 10px; font-size:26px; }}
+    p {{ color:#4b5563; line-height:1.55; }}
+    label {{ display:block; margin:16px 0 8px; font-weight:700; }}
+    input {{ box-sizing:border-box; width:100%; height:48px; border:1px solid #cbd5e1; border-radius:12px; padding:0 14px; font-size:16px; }}
+    button {{ width:100%; height:50px; margin-top:20px; border:0; border-radius:999px; background:#0e62cf; color:#fff; font-size:16px; font-weight:700; cursor:pointer; }}
+    .msg {{ color:{color}; font-weight:700; }}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <form class="card" method="post">
+      <h1>Dat lai mat khau</h1>
+      <p>Nhap mat khau moi cho tai khoan Lumio Study cua ban.</p>
+      {"<p class='msg'>" + message + "</p>" if message else ""}
+      <input type="hidden" name="token" value="{token}">
+      <label>Mat khau moi</label>
+      <input name="new_password" type="password" minlength="6" required>
+      <label>Xac nhan mat khau</label>
+      <input name="confirm_password" type="password" minlength="6" required>
+      <button type="submit">Cap nhat mat khau</button>
+    </form>
+  </main>
+</body>
+</html>
+"""
 
 
 def _firebase_app():
@@ -681,6 +749,139 @@ class UserAvatarApiView(APIView):
             )
         except SupabaseConfigError as exc:
             return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ForgotPasswordApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        serializer = ForgotPasswordSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Email khong hop le.")
+
+        email = serializer.validated_data["email"]
+        generic_message = "Neu email ton tai, lien ket dat lai mat khau da duoc gui."
+
+        try:
+            user_row, error_response = _read_user_by_email(email)
+            if error_response:
+                return error_response
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if not user_row:
+            return Response({"message": generic_message}, status=status.HTTP_200_OK)
+
+        token = _make_password_reset_token(user_row)
+        reset_link = _password_reset_link(request, token)
+        subject = "Dat lai mat khau Lumio Study"
+        message = (
+            "Ban vua yeu cau dat lai mat khau Lumio Study.\n\n"
+            f"Nhan vao lien ket sau de tao mat khau moi:\n{reset_link}\n\n"
+            f"Lien ket co hieu luc trong {getattr(settings, 'PASSWORD_RESET_TOKEN_MINUTES', 30)} phut.\n"
+            "Neu ban khong yeu cau, hay bo qua email nay."
+        )
+
+        try:
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
+                recipient_list=[email],
+                fail_silently=False,
+            )
+        except Exception as exc:
+            return Response(
+                {"message": "Khong gui duoc email dat lai mat khau.", "error": str(exc)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response({"message": generic_message}, status=status.HTTP_200_OK)
+
+
+class ResetPasswordApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        token = request.query_params.get("token", "")
+        return HttpResponse(_password_reset_html(token), content_type="text/html; charset=utf-8")
+
+    def post(self, request):
+        data = request.data if request.content_type == "application/json" else request.POST
+        serializer = ResetPasswordSerializer(data=data)
+        if not serializer.is_valid():
+            message = _extract_first_error(serializer.errors)
+            if data.get("token"):
+                return HttpResponse(
+                    _password_reset_html(data.get("token", ""), message, is_error=True),
+                    status=status.HTTP_400_BAD_REQUEST,
+                    content_type="text/html; charset=utf-8",
+                )
+            return _serializer_error_response(serializer, "Thong tin dat lai mat khau khong hop le.")
+
+        token = serializer.validated_data["token"]
+        try:
+            payload = _read_password_reset_token(token)
+        except SignatureExpired:
+            message = "Lien ket dat lai mat khau da het han."
+            return HttpResponse(
+                _password_reset_html(token, message, is_error=True),
+                status=status.HTTP_400_BAD_REQUEST,
+                content_type="text/html; charset=utf-8",
+            )
+        except BadSignature:
+            message = "Lien ket dat lai mat khau khong hop le."
+            return HttpResponse(
+                _password_reset_html("", message, is_error=True),
+                status=status.HTTP_400_BAD_REQUEST,
+                content_type="text/html; charset=utf-8",
+            )
+
+        user_id = payload.get("id_user")
+        email = payload.get("email_user")
+        if not user_id or not email:
+            message = "Lien ket dat lai mat khau khong hop le."
+            return HttpResponse(
+                _password_reset_html("", message, is_error=True),
+                status=status.HTTP_400_BAD_REQUEST,
+                content_type="text/html; charset=utf-8",
+            )
+
+        try:
+            user_row, error_response = _read_user_by_id(str(user_id))
+            if error_response:
+                return error_response
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if (user_row.get("email_user") or "").strip().lower() != str(email).strip().lower():
+            message = "Lien ket dat lai mat khau khong con hop le."
+            return HttpResponse(
+                _password_reset_html("", message, is_error=True),
+                status=status.HTTP_400_BAD_REQUEST,
+                content_type="text/html; charset=utf-8",
+            )
+
+        try:
+            updated_row, update_status = supabase_client.update_user_profile(
+                str(user_id),
+                {"password_user": _hash_password(serializer.validated_data["new_password"])},
+            )
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if update_status >= 400:
+            return Response(
+                {"message": "Dat lai mat khau that bai.", "error": updated_row},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return HttpResponse(
+            _password_reset_html("", "Dat lai mat khau thanh cong. Ban co the quay lai app de dang nhap."),
+            content_type="text/html; charset=utf-8",
+        )
 
 
 class ChangePasswordApiView(APIView):
