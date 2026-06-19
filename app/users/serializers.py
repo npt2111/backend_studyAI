@@ -74,6 +74,15 @@ class LoginSerializer(serializers.Serializer):
         return value.strip().lower()
 
 
+class GoogleLoginSerializer(serializers.Serializer):
+    id_token = serializers.CharField(
+        error_messages={
+            "required": "Thieu Google ID token.",
+            "blank": "Thieu Google ID token.",
+        }
+    )
+
+
 class RefreshTokenSerializer(serializers.Serializer):
     refresh_token = serializers.CharField(
         error_messages={

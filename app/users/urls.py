@@ -1,10 +1,11 @@
 from django.urls import path
 
-from .views import ChangePasswordApiView, LoginApiView, MeApiView, RefreshTokenApiView, RegisterApiView, UserAvatarApiView, UserProfileApiView
+from .views import ChangePasswordApiView, GoogleLoginApiView, LoginApiView, MeApiView, RefreshTokenApiView, RegisterApiView, UserAvatarApiView, UserProfileApiView
 
 urlpatterns = [
     path("register/", RegisterApiView.as_view(), name="users-register"),
     path("login/", LoginApiView.as_view(), name="users-login"),
+    path("google-login/", GoogleLoginApiView.as_view(), name="users-google-login"),
     path("me/", MeApiView.as_view(), name="users-me"),
     path("<uuid:user_id>/avatar/", UserAvatarApiView.as_view(), name="users-avatar"),
     path("<uuid:user_id>/change-password/", ChangePasswordApiView.as_view(), name="users-change-password"),

@@ -1,11 +1,16 @@
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict
 from uuid import uuid4
 
+import firebase_admin
 import jwt
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, identify_hasher, make_password
+from firebase_admin import auth as firebase_auth
+from firebase_admin import credentials as firebase_credentials
+from firebase_admin import exceptions as firebase_exceptions
 from jwt import ExpiredSignatureError, InvalidTokenError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework import status
@@ -16,7 +21,7 @@ from rest_framework.views import APIView
 from config.services import supabase_client
 from config.services.supabase_client import SupabaseConfigError
 
-from .serializers import ChangePasswordSerializer, LoginSerializer, RefreshTokenSerializer, RegisterSerializer, UpdateProfileSerializer
+from .serializers import ChangePasswordSerializer, GoogleLoginSerializer, LoginSerializer, RefreshTokenSerializer, RegisterSerializer, UpdateProfileSerializer
 
 
 def _extract_first_error(errors) -> str:
@@ -214,6 +219,37 @@ def _upgrade_plain_password_if_needed(user_id: str, raw_password: str, stored_pa
         pass
 
 
+def _firebase_app():
+    try:
+        return firebase_admin.get_app()
+    except ValueError:
+        raw_json = getattr(settings, "FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+        if raw_json:
+            try:
+                service_account = json.loads(raw_json)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("FIREBASE_SERVICE_ACCOUNT_JSON khong hop le.") from exc
+            cred = firebase_credentials.Certificate(service_account)
+            return firebase_admin.initialize_app(cred)
+        return firebase_admin.initialize_app()
+
+
+def _auth_response(profile: Dict, message: str, response_status: int, is_new_user: bool = False) -> Response:
+    tokens = _create_tokens(profile)
+    return Response(
+        {
+            "message": message,
+            "user": profile,
+            "id_user": profile.get("id"),
+            "email_user": profile.get("email"),
+            "full_name_user": profile.get("full_name"),
+            "tokens": tokens,
+            "is_new_user": is_new_user,
+        },
+        status=response_status,
+    )
+
+
 class RegisterApiView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -361,6 +397,98 @@ class LoginApiView(APIView):
                 "tokens": tokens,
             },
             status=status.HTTP_200_OK,
+        )
+
+
+class GoogleLoginApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        serializer = GoogleLoginSerializer(data=request.data)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Google ID token khong hop le.")
+
+        id_token = serializer.validated_data["id_token"]
+        try:
+            _firebase_app()
+            decoded = firebase_auth.verify_id_token(id_token)
+        except (
+            firebase_auth.ExpiredIdTokenError,
+            firebase_auth.InvalidIdTokenError,
+            firebase_auth.RevokedIdTokenError,
+            firebase_auth.CertificateFetchError,
+            ValueError,
+        ) as exc:
+            return Response(
+                {"message": f"Google ID token khong hop le: {exc}"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except (firebase_exceptions.FirebaseError, RuntimeError) as exc:
+            return Response(
+                {"message": f"Khong the xac thuc Firebase: {exc}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        email = str(decoded.get("email") or "").strip().lower()
+        if not email:
+            return Response(
+                {"message": "Tai khoan Google khong co email."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        full_name = str(decoded.get("name") or decoded.get("display_name") or "").strip()
+        if not full_name:
+            full_name = email.split("@", 1)[0]
+
+        is_new_user = False
+        try:
+            user_row, error_response = _read_user_by_email(email)
+            if error_response:
+                return error_response
+
+            if not user_row:
+                is_new_user = True
+                created_row, created_status = supabase_client.create_user(
+                    full_name=full_name,
+                    email=email,
+                    password_value=_hash_password(uuid4().hex),
+                )
+                if _is_duplicate_email_error(created_row):
+                    user_row, error_response = _read_user_by_email(email)
+                    if error_response:
+                        return error_response
+                elif created_status >= 400:
+                    return Response(
+                        {"message": "Tao user Google that bai.", "error": created_row},
+                        status=status.HTTP_502_BAD_GATEWAY,
+                    )
+                else:
+                    user_row = created_row
+
+                if not user_row:
+                    refetched, error_response = _read_user_by_email(email)
+                    if error_response:
+                        return error_response
+                    user_row = refetched
+        except SupabaseConfigError as exc:
+            return Response(
+                {"message": str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        profile = _extract_profile(user_row)
+        if not profile.get("id"):
+            return Response(
+                {"message": "User data khong hop le (thieu id_user)."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return _auth_response(
+            profile,
+            "Dang nhap Google thanh cong.",
+            status.HTTP_200_OK,
+            is_new_user=is_new_user,
         )
 
 

@@ -91,6 +91,56 @@ class UsersAuthApiTests(APITestCase):
         self.assertNotEqual(saved_password, "oldpassword123")
         self.assertTrue(check_password("oldpassword123", saved_password))
 
+    def test_google_login_existing_user_success(self):
+        user_row = {
+            "id_user": "uid-google",
+            "email_user": "google@example.com",
+            "full_name_user": "Google User",
+        }
+
+        with patch("app.users.views._firebase_app"), patch(
+            "app.users.views.firebase_auth.verify_id_token",
+            return_value={"email": "google@example.com", "name": "Google User"},
+        ), patch("app.users.views.supabase_client.get_user_by_email", return_value=(user_row, 200)):
+            response = self.client.post(
+                "/api/users/google-login/",
+                {"id_token": "firebase-token"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("tokens", response.data)
+        self.assertEqual(response.data["user"]["id"], "uid-google")
+        self.assertFalse(response.data["is_new_user"])
+
+    def test_google_login_creates_user_when_missing(self):
+        created_row = {
+            "id_user": "uid-new-google",
+            "email_user": "newgoogle@example.com",
+            "full_name_user": "New Google",
+        }
+
+        with patch("app.users.views._firebase_app"), patch(
+            "app.users.views.firebase_auth.verify_id_token",
+            return_value={"email": "newgoogle@example.com", "name": "New Google"},
+        ), patch(
+            "app.users.views.supabase_client.get_user_by_email",
+            return_value=({}, 200),
+        ), patch(
+            "app.users.views.supabase_client.create_user",
+            return_value=(created_row, 201),
+        ) as create_user:
+            response = self.client.post(
+                "/api/users/google-login/",
+                {"id_token": "firebase-token"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["user"]["email"], "newgoogle@example.com")
+        self.assertTrue(response.data["is_new_user"])
+        self.assertEqual(create_user.call_args.kwargs["full_name"], "New Google")
+
     def test_me_requires_authentication(self):
         response = self.client.get("/api/users/me/")
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
