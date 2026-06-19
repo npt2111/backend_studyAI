@@ -8,7 +8,7 @@ import firebase_admin
 import jwt
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, identify_hasher, make_password
-from django.core.mail import send_mail
+from django.core.mail import get_connection, send_mail
 from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.http import HttpResponse
 from django.urls import reverse
@@ -784,12 +784,14 @@ class ForgotPasswordApiView(APIView):
         )
 
         try:
+            connection = get_connection(timeout=getattr(settings, "EMAIL_TIMEOUT", 10))
             send_mail(
                 subject=subject,
                 message=message,
                 from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
                 recipient_list=[email],
                 fail_silently=False,
+                connection=connection,
             )
         except Exception as exc:
             return Response(
