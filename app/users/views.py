@@ -296,7 +296,12 @@ def _email_error_message(exc: Exception) -> str:
             "EMAIL_HOST_PASSWORD phai la Google App Password 16 ky tu."
         )
     if isinstance(exc, (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, TimeoutError, socket.timeout)):
-        return "Khong ket noi duoc Gmail SMTP. Hay kiem tra mang, EMAIL_HOST, EMAIL_PORT va EMAIL_USE_TLS."
+        return "Khong ket noi duoc Gmail SMTP. Hay thu EMAIL_PORT=465, EMAIL_USE_SSL=True, EMAIL_USE_TLS=False."
+    if isinstance(exc, OSError):
+        return (
+            "Server khong mo duoc ket noi toi Gmail SMTP. Neu dang deploy tren hosting, "
+            "hay thu port 465 SSL; neu van loi thi hosting dang chan outbound SMTP."
+        )
     if isinstance(exc, smtplib.SMTPRecipientsRefused):
         return "Dia chi email nguoi nhan bi Gmail tu choi."
     if isinstance(exc, smtplib.SMTPSenderRefused):
