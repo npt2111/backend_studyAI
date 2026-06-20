@@ -249,6 +249,31 @@ class UsersAuthApiTests(APITestCase):
         self.assertEqual(send_mail.call_args.kwargs["recipient_list"], ["reset@example.com"])
         self.assertIn("/api/users/password-reset/confirm/?token=", send_mail.call_args.kwargs["message"])
 
+    def test_forgot_password_can_send_email_with_resend_api(self):
+        user_row = {
+            "id_user": "00000000-0000-0000-0000-000000000005",
+            "email_user": "reset-api@example.com",
+            "full_name_user": "Reset Api",
+        }
+
+        class FakeResponse:
+            status_code = 200
+            text = "{}"
+
+        with self.settings(RESEND_API_KEY="resend-key", RESEND_FROM_EMAIL="Lumio Study <reset@example.com>"), patch(
+            "app.users.views.supabase_client.get_user_by_email", return_value=(user_row, 200)
+        ), patch("app.users.views.requests.post", return_value=FakeResponse()) as post:
+            response = self.client.post(
+                "/api/users/password-reset/request/",
+                {"email": "reset-api@example.com"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(payload["to"], ["reset-api@example.com"])
+        self.assertIn("/api/users/password-reset/confirm/?token=", payload["text"])
+
     def test_reset_password_confirm_updates_hashed_password(self):
         from app.users.views import _make_password_reset_token
 

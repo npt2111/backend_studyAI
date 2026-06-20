@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import firebase_admin
 import jwt
+import requests
 from django.conf import settings
 from django.contrib.auth.hashers import check_password, identify_hasher, make_password
 from django.core.mail import get_connection, send_mail
@@ -309,6 +310,41 @@ def _email_error_message(exc: Exception) -> str:
     if isinstance(exc, smtplib.SMTPException):
         return f"Gmail SMTP loi: {exc}"
     return f"Khong gui duoc email dat lai mat khau: {exc}"
+
+
+def _send_password_reset_email(email: str, subject: str, message: str) -> None:
+    resend_api_key = getattr(settings, "RESEND_API_KEY", "").strip()
+    if resend_api_key:
+        response = requests.post(
+            getattr(settings, "RESEND_API_URL", "https://api.resend.com/emails"),
+            headers={
+                "Authorization": f"Bearer {resend_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": getattr(settings, "RESEND_FROM_EMAIL", getattr(settings, "DEFAULT_FROM_EMAIL", "")),
+                "to": [email],
+                "subject": subject,
+                "text": message,
+            },
+            timeout=getattr(settings, "EMAIL_TIMEOUT", 10),
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"Resend API loi {response.status_code}: {response.text}")
+        return
+
+    if not getattr(settings, "EMAIL_HOST_USER", "") or not getattr(settings, "EMAIL_HOST_PASSWORD", ""):
+        raise RuntimeError("Backend chua cau hinh EMAIL_HOST_USER hoac EMAIL_HOST_PASSWORD.")
+
+    connection = get_connection(timeout=getattr(settings, "EMAIL_TIMEOUT", 10))
+    send_mail(
+        subject=subject,
+        message=message,
+        from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
+        recipient_list=[email],
+        fail_silently=False,
+        connection=connection,
+    )
 
 
 def _firebase_app():
@@ -808,20 +844,7 @@ class ForgotPasswordApiView(APIView):
         )
 
         try:
-            if not getattr(settings, "EMAIL_HOST_USER", "") or not getattr(settings, "EMAIL_HOST_PASSWORD", ""):
-                return Response(
-                    {"message": "Backend chua cau hinh EMAIL_HOST_USER hoac EMAIL_HOST_PASSWORD."},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                )
-            connection = get_connection(timeout=getattr(settings, "EMAIL_TIMEOUT", 10))
-            send_mail(
-                subject=subject,
-                message=message,
-                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
-                recipient_list=[email],
-                fail_silently=False,
-                connection=connection,
-            )
+            _send_password_reset_email(email, subject, message)
         except Exception as exc:
             return Response(
                 {"message": _email_error_message(exc), "error": str(exc)},
