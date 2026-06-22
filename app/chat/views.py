@@ -8,7 +8,12 @@ from config.services import supabase_client
 from config.services.supabase_client import SupabaseConfigError
 from app.documents.rag import ensure_document_chunks_indexed, retrieve_relevant_chunks
 
-from .serializers import ChatMessageSerializer, ChatSessionQuerySerializer, ChatSessionStartSerializer
+from .serializers import (
+    ChatMessageSerializer,
+    ChatSessionListSerializer,
+    ChatSessionQuerySerializer,
+    ChatSessionStartSerializer,
+)
 from .services import (
     CHAT_GREETING,
     generate_document_chat_reply,
@@ -148,6 +153,66 @@ class DocumentChatSessionApiView(APIView):
                 {
                     "session": normalize_chat_session(session_row),
                     "messages": [normalize_chat_message(row) for row in messages],
+                },
+                status=status.HTTP_200_OK,
+            )
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def delete(self, request, session_id):
+        serializer = ChatSessionQuerySerializer(data=request.query_params)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Query param khong hop le.")
+
+        user_id = str(serializer.validated_data["user_id"])
+        try:
+            session_row, session_status = supabase_client.get_document_chat_session(str(session_id))
+            if session_status >= 400:
+                return Response({"message": "Khong doc duoc phien chat."}, status=status.HTTP_502_BAD_GATEWAY)
+            if not session_row:
+                return Response({"message": "Khong tim thay phien chat."}, status=status.HTTP_404_NOT_FOUND)
+            if str(session_row.get("id_user")) != user_id:
+                return Response({"message": "Ban khong co quyen xoa phien chat nay."}, status=status.HTTP_403_FORBIDDEN)
+
+            deleted_row, delete_status = supabase_client.delete_document_chat_session(str(session_id))
+            if delete_status >= 400:
+                return Response({"message": "Xoa phien chat that bai.", "error": deleted_row}, status=status.HTTP_502_BAD_GATEWAY)
+
+            return Response(
+                {
+                    "message": "Da xoa phien chat.",
+                    "session": normalize_chat_session(deleted_row or session_row),
+                },
+                status=status.HTTP_200_OK,
+            )
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DocumentChatSessionListApiView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        serializer = ChatSessionListSerializer(data=request.query_params)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Query param khong hop le.")
+
+        user_id = str(serializer.validated_data["user_id"])
+        limit = int(serializer.validated_data.get("limit") or 50)
+        offset = int(serializer.validated_data.get("offset") or 0)
+        try:
+            sessions, sessions_status = supabase_client.list_document_chat_sessions(
+                user_id=user_id,
+                limit=limit,
+                offset=offset,
+            )
+            if sessions_status >= 400:
+                return Response({"message": "Khong lay duoc danh sach chat."}, status=status.HTTP_502_BAD_GATEWAY)
+
+            return Response(
+                {
+                    "sessions": [normalize_chat_session(row) for row in sessions],
                 },
                 status=status.HTTP_200_OK,
             )

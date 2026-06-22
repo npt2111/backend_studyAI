@@ -47,6 +47,12 @@ class FlashcardListQuerySerializer(FlashcardQuerySerializer):
         default=20,
         error_messages={"invalid": "limit khong hop le."},
     )
+    offset = serializers.IntegerField(
+        required=False,
+        min_value=0,
+        default=0,
+        error_messages={"invalid": "offset khong hop le."},
+    )
 
 
 class FlashcardAttemptStartSerializer(serializers.Serializer):
