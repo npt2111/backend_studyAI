@@ -232,8 +232,9 @@ class FlashcardListApiView(APIView):
 
         user_id = str(serializer.validated_data["user_id"])
         limit = int(serializer.validated_data["limit"])
+        offset = int(serializer.validated_data["offset"])
         try:
-            rows, rows_status = supabase_client.list_flashcard_generations(user_id=user_id, limit=limit)
+            rows, rows_status = supabase_client.list_flashcard_generations(user_id=user_id, limit=limit, offset=offset)
             if rows_status >= 400:
                 return Response({"message": "Khong lay duoc danh sach flashcard."}, status=status.HTTP_502_BAD_GATEWAY)
             return Response({"flashcards": [normalize_flashcard(row) for row in rows]}, status=status.HTTP_200_OK)

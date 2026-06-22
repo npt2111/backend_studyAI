@@ -664,15 +664,17 @@ def get_quiz_generation(quiz_id: str) -> Tuple[Dict[str, Any], int]:
     return _select_one(f"/rest/v1/quiz_generations?select=*&id_quiz=eq.{encoded}&limit=1")
 
 
-def list_quiz_generations(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[str, Any]], int]:
+def list_quiz_generations(*, user_id: str, limit: int = 20, offset: int = 0) -> Tuple[List[Dict[str, Any]], int]:
     safe_limit = max(1, min(limit, 100))
+    safe_offset = max(0, offset)
+    window_limit = max(1, min(safe_offset + safe_limit, 200))
     encoded_user = quote(user_id, safe="")
     payload, status_code = _request(
         "GET",
-        f"/rest/v1/quiz_generations?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={safe_limit}",
+        f"/rest/v1/quiz_generations?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={window_limit}",
     )
     own_rows = payload if isinstance(payload, list) else []
-    saved_rows, saved_status = list_saved_quizzes(user_id=user_id, limit=safe_limit)
+    saved_rows, saved_status = list_saved_quizzes(user_id=user_id, limit=window_limit)
     if status_code >= 400:
         return [], status_code
     if saved_status >= 400:
@@ -689,7 +691,7 @@ def list_quiz_generations(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[s
             row["latest_attempt"] = latest_attempt
         rows.append(row)
     rows.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
-    return rows[:safe_limit], 200
+    return rows[safe_offset:safe_offset + safe_limit], 200
 
 
 def get_latest_quiz_attempt(*, user_id: str, quiz_id: str) -> Tuple[Dict[str, Any], int]:
@@ -870,7 +872,7 @@ def save_shared_quiz(*, user_id: str, quiz_id: str, share_code: str) -> Tuple[Di
 
 
 def list_saved_quizzes(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[str, Any]], int]:
-    safe_limit = max(1, min(limit, 100))
+    safe_limit = max(1, min(limit, 200))
     encoded_user = quote(user_id, safe="")
     saved_payload, saved_status = _request(
         "GET",
@@ -962,15 +964,17 @@ def get_flashcard_generation(flashcard_id: str) -> Tuple[Dict[str, Any], int]:
     return _select_one(f"/rest/v1/flashcard_generations?select=*&id_flashcard=eq.{encoded}&limit=1")
 
 
-def list_flashcard_generations(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[str, Any]], int]:
+def list_flashcard_generations(*, user_id: str, limit: int = 20, offset: int = 0) -> Tuple[List[Dict[str, Any]], int]:
     safe_limit = max(1, min(limit, 100))
+    safe_offset = max(0, offset)
+    window_limit = max(1, min(safe_offset + safe_limit, 200))
     encoded_user = quote(user_id, safe="")
     payload, status_code = _request(
         "GET",
-        f"/rest/v1/flashcard_generations?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={safe_limit}",
+        f"/rest/v1/flashcard_generations?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={window_limit}",
     )
     own_rows = payload if isinstance(payload, list) else []
-    saved_rows, saved_status = list_saved_flashcards(user_id=user_id, limit=safe_limit)
+    saved_rows, saved_status = list_saved_flashcards(user_id=user_id, limit=window_limit)
     if status_code >= 400:
         return [], status_code
     if saved_status >= 400:
@@ -987,7 +991,7 @@ def list_flashcard_generations(*, user_id: str, limit: int = 20) -> Tuple[List[D
             row["latest_attempt"] = latest_attempt
         rows.append(row)
     rows.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
-    return rows[:safe_limit], 200
+    return rows[safe_offset:safe_offset + safe_limit], 200
 
 
 def get_latest_flashcard_attempt(*, user_id: str, flashcard_id: str) -> Tuple[Dict[str, Any], int]:
@@ -1099,7 +1103,7 @@ def save_shared_flashcard(*, user_id: str, flashcard_id: str, share_code: str) -
 
 
 def list_saved_flashcards(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[str, Any]], int]:
-    safe_limit = max(1, min(limit, 100))
+    safe_limit = max(1, min(limit, 200))
     encoded_user = quote(user_id, safe="")
     saved_payload, saved_status = _request(
         "GET",
@@ -1251,6 +1255,19 @@ def get_document_chat_session(session_id: str) -> Tuple[Dict[str, Any], int]:
     return _select_one(f"/rest/v1/document_chat_sessions?select=*&id_chat_session=eq.{encoded}&limit=1")
 
 
+def list_document_chat_sessions(*, user_id: str, limit: int = 50, offset: int = 0) -> Tuple[List[Dict[str, Any]], int]:
+    safe_limit = max(1, min(limit, 100))
+    safe_offset = max(0, offset)
+    encoded_user = quote(user_id, safe="")
+    payload, status_code = _request(
+        "GET",
+        f"/rest/v1/document_chat_sessions?select=*&id_user=eq.{encoded_user}&order=updated_at.desc&limit={safe_limit}&offset={safe_offset}",
+    )
+    if isinstance(payload, list):
+        return payload, 200
+    return [], status_code
+
+
 def create_document_chat_session(
     *,
     user_id: str,
@@ -1280,6 +1297,18 @@ def touch_document_chat_session(session_id: str) -> Tuple[Dict[str, Any], int]:
         "PATCH",
         f"/rest/v1/document_chat_sessions?id_chat_session=eq.{encoded}",
         json={"updated_at": _now_iso()},
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else {}), response_status
+    return response_payload, response_status
+
+
+def delete_document_chat_session(session_id: str) -> Tuple[Dict[str, Any], int]:
+    encoded = quote(session_id, safe="")
+    response_payload, response_status = _request(
+        "DELETE",
+        f"/rest/v1/document_chat_sessions?id_chat_session=eq.{encoded}",
         extra_headers={"Prefer": "return=representation"},
     )
     if isinstance(response_payload, list):
