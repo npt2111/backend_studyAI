@@ -440,12 +440,13 @@ def get_document_read_result_by_storage_path(storage_path: str, user_id: str = "
     return _select_one(path)
 
 
-def list_document_read_results(*, user_id: str, limit: int = 20) -> Tuple[List[Dict[str, Any]], int]:
+def list_document_read_results(*, user_id: str, limit: int = 20, offset: int = 0) -> Tuple[List[Dict[str, Any]], int]:
     safe_limit = max(1, min(limit, 100))
+    safe_offset = max(0, offset)
     encoded_user = quote(user_id, safe="")
     payload, status_code = _request(
         "GET",
-        f"/rest/v1/document_read_results?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={safe_limit}",
+        f"/rest/v1/document_read_results?select=*&id_user=eq.{encoded_user}&order=created_at.desc&limit={safe_limit}&offset={safe_offset}",
     )
     if isinstance(payload, list):
         return payload, 200
