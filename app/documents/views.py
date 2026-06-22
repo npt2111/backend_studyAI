@@ -266,9 +266,10 @@ class DocumentReadResultListApiView(APIView):
 
         user_id = str(serializer.validated_data["user_id"])
         limit = int(serializer.validated_data["limit"])
+        offset = int(serializer.validated_data["offset"])
 
         try:
-            rows, rows_status = supabase_client.list_document_read_results(user_id=user_id, limit=limit)
+            rows, rows_status = supabase_client.list_document_read_results(user_id=user_id, limit=limit, offset=offset)
             if rows_status >= 400:
                 return Response({"message": "Khong lay duoc danh sach ket qua doc file."}, status=status.HTTP_502_BAD_GATEWAY)
 
