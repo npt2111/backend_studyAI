@@ -758,6 +758,36 @@ def update_quiz_attempt(attempt_id: str, fields: Dict[str, Any]) -> Tuple[Dict[s
     return response_payload, response_status
 
 
+def create_ai_training_event(
+    *,
+    user_id: str,
+    source_type: str,
+    source_id: str,
+    read_id: str = "",
+    training_payload: Optional[Dict[str, Any]] = None,
+    ai_output: Optional[Dict[str, Any]] = None,
+) -> Tuple[Dict[str, Any], int]:
+    payload: Dict[str, Any] = {
+        "id_user": user_id,
+        "source_type": source_type,
+        "source_id": source_id,
+        "id_read": read_id or None,
+        "training_payload": training_payload or {},
+        "ai_output": ai_output or {},
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/ai_training_events",
+        json=payload,
+        extra_headers={"Prefer": "return=representation"},
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
 def delete_quiz_attempt(attempt_id: str) -> Tuple[Dict[str, Any], int]:
     encoded = quote(attempt_id, safe="")
     response_payload, response_status = _request(
