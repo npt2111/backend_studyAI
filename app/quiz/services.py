@@ -81,12 +81,16 @@ def build_attempt_answer(
         raise RuntimeError("selected_answer khong hop le.")
     if not correct_answer:
         raise RuntimeError("Quiz thieu correct_answer.")
+    selected_text = _option_text(question, selected)
+    correct_text = _option_text(question, correct_answer)
 
     return {
         "question_index": question_index,
         "question_number": question_index + 1,
         "selected_answer": selected,
+        "selected_answer_text": selected_text,
         "correct_answer": correct_answer,
+        "correct_answer_text": correct_text,
         "is_correct": selected == correct_answer,
     }
 
@@ -165,17 +169,34 @@ def _build_wrong_questions(*, answers: List[Dict[str, Any]], questions: List[Any
             continue
         index = int(answer.get("question_index", -1))
         question = questions[index] if 0 <= index < len(questions) and isinstance(questions[index], dict) else {}
+        selected_answer = str(answer.get("selected_answer") or "")
+        correct_answer = str(answer.get("correct_answer") or "")
         wrong_questions.append(
             {
                 "question_index": index,
                 "question_number": int(answer.get("question_number") or index + 1),
                 "question": str(question.get("question") or ""),
-                "selected_answer": str(answer.get("selected_answer") or ""),
-                "correct_answer": str(answer.get("correct_answer") or ""),
+                "selected_answer": selected_answer,
+                "selected_answer_text": str(answer.get("selected_answer_text") or _option_text(question, selected_answer)),
+                "correct_answer": correct_answer,
+                "correct_answer_text": str(answer.get("correct_answer_text") or _option_text(question, correct_answer)),
                 "explanation": str(question.get("explanation") or ""),
             }
         )
     return wrong_questions
+
+
+def _option_text(question: Dict[str, Any], key: str) -> str:
+    options = question.get("options")
+    if not isinstance(options, list):
+        return ""
+    target = str(key or "").strip().upper()
+    for option in options:
+        if not isinstance(option, dict):
+            continue
+        if str(option.get("key") or "").strip().upper() == target:
+            return str(option.get("text") or "").strip()
+    return ""
 
 
 def _build_rule_based_recommendations(
