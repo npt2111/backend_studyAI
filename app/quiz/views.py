@@ -551,6 +551,40 @@ class DeleteQuizAttemptApiView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
+    def get(self, request, attempt_id):
+        serializer = AttemptDeleteSerializer(data=request.query_params)
+        if not serializer.is_valid():
+            return _serializer_error_response(serializer, "Query param khong hop le.")
+
+        user_id = str(serializer.validated_data["user_id"])
+        try:
+            attempt_row, attempt_status = supabase_client.get_quiz_attempt(str(attempt_id))
+            if attempt_status >= 400:
+                return Response({"message": "Khong doc duoc attempt."}, status=status.HTTP_502_BAD_GATEWAY)
+            if not attempt_row:
+                return Response({"message": "Khong tim thay attempt."}, status=status.HTTP_404_NOT_FOUND)
+            if str(attempt_row.get("id_user")) != user_id:
+                return Response({"message": "Ban khong co quyen xem attempt nay."}, status=status.HTTP_403_FORBIDDEN)
+
+            quiz_row, quiz_status = supabase_client.get_quiz_generation(str(attempt_row.get("id_quiz")))
+            insights = {}
+            if quiz_status < 400 and quiz_row:
+                insights = build_learning_recommendations(quiz_row=quiz_row, attempt_row=attempt_row)
+
+            return Response(
+                {
+                    "attempt": normalize_attempt(attempt_row),
+                    "recommendations": insights.get("recommendations", []),
+                    "wrong_questions": insights.get("wrong_questions", []),
+                    "accuracy_percent": insights.get("accuracy_percent", 0),
+                    "ai_generated": bool(insights.get("ai_generated")),
+                    "ai_training": insights.get("ai_training", {}),
+                },
+                status=status.HTTP_200_OK,
+            )
+        except SupabaseConfigError as exc:
+            return Response({"message": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def delete(self, request, attempt_id):
         serializer = AttemptDeleteSerializer(data=request.query_params)
         if not serializer.is_valid():
