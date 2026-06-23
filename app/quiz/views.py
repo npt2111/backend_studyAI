@@ -515,12 +515,31 @@ class FinishQuizAttemptApiView(APIView):
             insights = {}
             if quiz_status < 400 and quiz_row:
                 insights = build_learning_recommendations(quiz_row=quiz_row, attempt_row=updated_row)
+                try:
+                    supabase_client.create_ai_training_event(
+                        user_id=user_id,
+                        source_type="quiz_attempt",
+                        source_id=str(attempt_id),
+                        read_id=str(attempt_row.get("id_read") or ""),
+                        training_payload=insights.get("ai_training", {}),
+                        ai_output={
+                            "ai_generated": bool(insights.get("ai_generated")),
+                            "recommendations": insights.get("recommendations", []),
+                            "wrong_questions": insights.get("wrong_questions", []),
+                            "accuracy_percent": insights.get("accuracy_percent", 0),
+                            "ai_error": insights.get("ai_error", ""),
+                        },
+                    )
+                except Exception:
+                    pass
             return Response(
                 {
                     "attempt": normalize_attempt(updated_row),
                     "recommendations": insights.get("recommendations", []),
                     "wrong_questions": insights.get("wrong_questions", []),
                     "accuracy_percent": insights.get("accuracy_percent", 0),
+                    "ai_generated": bool(insights.get("ai_generated")),
+                    "ai_training": insights.get("ai_training", {}),
                 },
                 status=status.HTTP_200_OK,
             )

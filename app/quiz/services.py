@@ -11,6 +11,12 @@ Ban la cong cu tao quiz hoc tap bang tieng Viet. Chi tao cau hoi dua tren noi du
 Tra ve JSON thuan, khong markdown, khong giai thich ngoai JSON.
 """.strip()
 
+LEARNING_AI_SYSTEM_PROMPT = """
+Ban la AI huan luyen hoc tap ca nhan hoa cho ung dung StudyAssistant.
+Hay hoc tu du lieu attempt cua nguoi dung: cau sai, dap an da chon, dap an dung, giai thich, ti le dung va muc do hoan thanh.
+Tra ve JSON thuan, khong markdown, khong them chu ngoai JSON.
+Khong bia kien thuc ngoai du lieu duoc cung cap.
+""".strip()
 
 def normalize_quiz(row: Dict[str, Any]) -> Dict[str, Any]:
     if not row:
@@ -118,7 +124,41 @@ def build_learning_recommendations(
     correct = int(attempt_row.get("correct_count") or 0)
     completion = float(attempt_row.get("completion_percent") or 0)
     accuracy = round((correct / max(total, 1)) * 100, 2)
+    wrong_questions = _build_wrong_questions(answers=answers, questions=questions)
+    training_profile = _build_ai_training_profile(
+        quiz_row=quiz_row,
+        attempt_row=attempt_row,
+        accuracy=accuracy,
+        completion=completion,
+        wrong_questions=wrong_questions,
+    )
+    fallback_recommendations = _build_rule_based_recommendations(
+        accuracy=accuracy,
+        completion=completion,
+        total=total,
+        correct=correct,
+        wrong_questions=wrong_questions,
+    )
+    ai_recommendations: List[Dict[str, str]] = []
+    ai_error = ""
 
+    try:
+        ai_recommendations = generate_ai_learning_recommendations(training_profile=training_profile)
+    except Exception as exc:
+        ai_error = str(exc) if str(exc) else "AI training failed."
+
+    recommendations = ai_recommendations or fallback_recommendations
+    return {
+        "accuracy_percent": accuracy,
+        "recommendations": recommendations,
+        "wrong_questions": wrong_questions,
+        "ai_training": training_profile,
+        "ai_generated": bool(ai_recommendations),
+        "ai_error": ai_error,
+    }
+
+
+def _build_wrong_questions(*, answers: List[Dict[str, Any]], questions: List[Any]) -> List[Dict[str, Any]]:
     wrong_questions: List[Dict[str, Any]] = []
     for answer in answers:
         if not isinstance(answer, dict) or bool(answer.get("is_correct")):
@@ -135,7 +175,18 @@ def build_learning_recommendations(
                 "explanation": str(question.get("explanation") or ""),
             }
         )
+    return wrong_questions
 
+
+def _build_rule_based_recommendations(
+    *,
+    accuracy: float,
+    completion: float,
+    total: int,
+    correct: int,
+    wrong_questions: List[Dict[str, Any]],
+) -> List[Dict[str, str]]:
+    wrong_count = max(0, total - correct)
     recommendations: List[Dict[str, str]] = []
     if accuracy < 50:
         recommendations.append(
@@ -177,13 +228,129 @@ def build_learning_recommendations(
                 "message": "Kết quả của bạn khá tốt. Bạn có thể thử quiz khó hơn hoặc tiếp tục ôn tập bằng flashcard.",
             }
         )
+    return recommendations
 
+
+def _build_ai_training_profile(
+    *,
+    quiz_row: Dict[str, Any],
+    attempt_row: Dict[str, Any],
+    accuracy: float,
+    completion: float,
+    wrong_questions: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    answers = attempt_row.get("answers") if isinstance(attempt_row.get("answers"), list) else []
     return {
+        "user_id": str(attempt_row.get("id_user") or ""),
+        "quiz_id": str(attempt_row.get("id_quiz") or ""),
+        "attempt_id": str(attempt_row.get("id_attempt") or ""),
+        "read_id": str(attempt_row.get("id_read") or quiz_row.get("id_read") or ""),
+        "file_name": str(quiz_row.get("file_name") or ""),
+        "quiz_type": str(quiz_row.get("quiz_type") or ""),
+        "difficulty": str(quiz_row.get("difficulty") or ""),
+        "total_questions": int(attempt_row.get("total_questions") or 0),
+        "correct_count": int(attempt_row.get("correct_count") or 0),
+        "wrong_count": int(attempt_row.get("wrong_count") or len(wrong_questions)),
+        "completion_percent": completion,
         "accuracy_percent": accuracy,
-        "recommendations": recommendations,
-        "wrong_questions": wrong_questions,
+        "elapsed_seconds": int(attempt_row.get("elapsed_seconds") or 0),
+        "learning_signals": {
+            "weak_questions": wrong_questions[:8],
+            "answered_count": len(answers),
+            "needs_retake": accuracy < 50 or bool(wrong_questions),
+            "needs_continue": completion < 80,
+        },
     }
 
+
+def generate_ai_learning_recommendations(*, training_profile: Dict[str, Any]) -> List[Dict[str, str]]:
+    api_key = str(getattr(settings, "GROQ_API_KEY", "") or "").strip()
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY chua duoc cau hinh.")
+
+    profile_json = json.dumps(training_profile, ensure_ascii=False)[:12000]
+    user_prompt = f"""
+Day la du lieu huan luyen cua mot phien lam quiz. Hay hoc tu du lieu nay va tao goi y hoc tap ca nhan hoa, ngan gon, bang tieng Viet co dau.
+
+Du lieu huan luyen:
+{profile_json}
+
+Yeu cau JSON:
+{{
+  "recommendations": [
+    {{"type": "ai_personalized_plan", "title": "...", "message": "..."}}
+  ]
+}}
+
+Quy tac:
+- Toi da 4 recommendations.
+- Neu co cau sai, neu ro nen on lai nhom noi dung/cau nao dua tren question va explanation.
+- Neu diem thap, de xuat lam lai quiz va tao flashcard tu cau sai.
+- Neu hoan thanh thap, de xuat tiep tuc hoc phan con thieu.
+- Khong noi chung chung; moi message phai dua tren du lieu huan luyen.
+""".strip()
+
+    payload = {
+        "model": getattr(settings, "GROQ_MODEL", "llama-3.3-70b-versatile"),
+        "messages": [
+            {"role": "system", "content": LEARNING_AI_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.25,
+        "top_p": 0.9,
+        "response_format": {"type": "json_object"},
+    }
+
+    base_url = str(getattr(settings, "GROQ_BASE_URL", "https://api.groq.com/openai/v1")).rstrip("/")
+    timeout = int(getattr(settings, "LEARNING_AI_TIMEOUT_SECONDS", 25))
+    response = requests.post(
+        f"{base_url}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=timeout,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"Groq learning AI loi {response.status_code}: {response.text[:500]}")
+
+    data = response.json()
+    choices = data.get("choices") if isinstance(data, dict) else None
+    content = ""
+    if choices:
+        content = str(((choices[0] or {}).get("message") or {}).get("content") or "").strip()
+    if not content:
+        raise RuntimeError("Groq learning AI tra ve noi dung rong.")
+
+    parsed = _parse_json(content)
+    recommendations = parsed.get("recommendations") if isinstance(parsed, dict) else None
+    return _sanitize_learning_recommendations(recommendations)
+
+
+def _sanitize_learning_recommendations(raw_items: Any) -> List[Dict[str, str]]:
+    if not isinstance(raw_items, list):
+        return []
+
+    items: List[Dict[str, str]] = []
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        title = str(raw.get("title") or "").strip()
+        message = str(raw.get("message") or "").strip()
+        item_type = str(raw.get("type") or "ai_personalized_plan").strip()
+        if not title or not message:
+            continue
+        items.append(
+            {
+                "type": item_type[:80],
+                "title": title[:120],
+                "message": message[:500],
+            }
+        )
+        if len(items) >= 4:
+            break
+    return items
 
 def generate_quiz_questions(
     *,
