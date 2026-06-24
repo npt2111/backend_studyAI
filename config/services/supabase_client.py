@@ -1446,6 +1446,66 @@ def list_study_activities(
     return [], status_code
 
 
+def list_notification_read_ids(*, user_id: str) -> Tuple[List[str], int]:
+    encoded_user = quote(user_id, safe="")
+    payload, status_code = _request(
+        "GET",
+        f"/rest/v1/notification_reads?select=notification_id&id_user=eq.{encoded_user}",
+    )
+    if isinstance(payload, list):
+        return [
+            str(row.get("notification_id") or "")
+            for row in payload
+            if str(row.get("notification_id") or "").strip()
+        ], status_code
+    return [], status_code
+
+
+def mark_notification_read(*, user_id: str, notification_id: str) -> Tuple[Dict[str, Any], int]:
+    payload = {
+        "id_user": user_id,
+        "notification_id": notification_id,
+        "read_at": _now_iso(),
+    }
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/notification_reads?on_conflict=id_user,notification_id",
+        json=payload,
+        extra_headers={
+            "Prefer": "resolution=merge-duplicates,return=representation",
+        },
+    )
+    if isinstance(response_payload, list):
+        return (response_payload[0] if response_payload else payload), response_status
+    return response_payload, response_status
+
+
+def mark_notifications_read_bulk(*, user_id: str, notification_ids: List[str]) -> Tuple[List[Dict[str, Any]], int]:
+    clean_ids = [item for item in dict.fromkeys(notification_ids) if item]
+    if not clean_ids:
+        return [], 200
+
+    payload = [
+        {
+            "id_user": user_id,
+            "notification_id": notification_id,
+            "read_at": _now_iso(),
+        }
+        for notification_id in clean_ids
+    ]
+    response_payload, response_status = _request(
+        "POST",
+        "/rest/v1/notification_reads?on_conflict=id_user,notification_id",
+        json=payload,
+        extra_headers={
+            "Prefer": "resolution=merge-duplicates,return=representation",
+        },
+    )
+    if isinstance(response_payload, list):
+        return response_payload, response_status
+    return [], response_status
+
+
 def count_document_read_results(*, user_id: str) -> Tuple[int, int]:
     encoded_user = quote(user_id, safe="")
     payload, status_code, headers = _request_raw(
