@@ -32,6 +32,20 @@ def _extract_first_error(errors) -> str:
     return "Du lieu khong hop le."
 
 
+def _public_ai_error(raw: str) -> str:
+    text = str(raw or "")
+    lowered = text.lower()
+    if (
+        "gemini" in lowered
+        or "unavailable" in lowered
+        or "high demand" in lowered
+        or "503" in lowered
+        or "429" in lowered
+    ):
+        return "AI dang qua tai, vui long thu lai sau it phut."
+    return text if text else "Tao mindmap that bai."
+
+
 class GenerateMindmapApiView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -121,16 +135,17 @@ class GenerateMindmapApiView(APIView):
                 if update_status >= 400:
                     return Response({"message": "Luu mindmap that bai.", "error": mindmap_row}, status=status.HTTP_502_BAD_GATEWAY)
             except Exception as exc:
+                public_message = _public_ai_error(str(exc))
                 failed_row, _ = supabase_client.update_mindmap(
                     mindmap_id,
                     {
                         "status": "failed",
-                        "error_message": str(exc)[:1000] if str(exc) else "Khong ro loi.",
+                        "error_message": public_message[:1000],
                     },
                 )
                 return Response(
                     {
-                        "message": str(exc) if str(exc) else "Tao mindmap that bai.",
+                        "message": public_message,
                         "mindmap": normalize_mindmap(failed_row or mindmap_row),
                     },
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
