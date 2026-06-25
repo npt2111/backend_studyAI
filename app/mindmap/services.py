@@ -10,6 +10,7 @@ from django.conf import settings
 MINDMAP_PROMPT = """
 Ban la cong cu tao so do tu duy bang tieng Viet. Chi dua tren noi dung tai lieu duoc cung cap, khong bia them thong tin.
 Tra ve JSON thuan, khong markdown, khong giai thich ngoai JSON.
+So do can co dang cay ro rang, khong duoc qua ngan.
 """.strip()
 
 
@@ -55,10 +56,12 @@ Yeu cau JSON:
 
 Quy tac:
 - title va children viet bang tieng Viet.
-- Tao 4 den 8 nhanh chinh neu tai lieu cho phep.
-- Moi nhanh co toi da 5 y phu, ngan gon, de render mindmap.
+- Tao 6 den 10 nhanh chinh neu tai lieu co du noi dung.
+- Moi nhanh co 3 den 6 y phu, ngan gon nhung khong duoc qua tiet kiem.
 - Khong lap y, khong bia ngoai tai lieu.
 - Khong tra ve markdown, chi tra ve JSON.
+- Neu tai lieu dai, uu tien bao phu day du noi dung hon la rut gon.
+- Khong lam so do 1-2 nhanh; phai mo rong cac y chinh co trong tai lieu.
 
 Tai lieu:
 {source}
@@ -83,6 +86,8 @@ Tai lieu:
     text = _extract_groq_text(payload)
     parsed = _parse_json(text)
     tree = _sanitize_node(parsed)
+    if _mindmap_too_shallow(tree):
+        tree = _fallback_mindmap_from_text(source_text=source, file_name=file_name)
     markdown = mindmap_json_to_markdown(tree)
     return {
         "mindmap_json": tree,
@@ -179,7 +184,7 @@ def _parse_json(raw: str) -> Dict[str, Any]:
     return json.loads(candidate)
 
 
-def _sanitize_node(raw: Any, depth: int = 0, max_depth: int = 4) -> Dict[str, Any]:
+def _sanitize_node(raw: Any, depth: int = 0, max_depth: int = 5) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         raise RuntimeError("Mindmap JSON khong hop le.")
     title = str(raw.get("title") or "").strip()
@@ -188,9 +193,71 @@ def _sanitize_node(raw: Any, depth: int = 0, max_depth: int = 4) -> Dict[str, An
     children: List[Dict[str, Any]] = []
     raw_children = raw.get("children")
     if depth < max_depth and isinstance(raw_children, list):
-        for child in raw_children[:10]:
+        for child in raw_children[:12]:
             try:
                 children.append(_sanitize_node(child, depth + 1, max_depth))
             except RuntimeError:
                 continue
     return {"title": title, "children": children}
+
+
+def _mindmap_too_shallow(tree: Dict[str, Any]) -> bool:
+    if not isinstance(tree, dict):
+        return True
+    children = tree.get("children")
+    if not isinstance(children, list):
+        return True
+    node_count = 0
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        node_count += 1
+        raw_children = node.get("children")
+        if isinstance(raw_children, list):
+            stack.extend(child for child in raw_children if isinstance(child, dict))
+    return len(children) < 4 or node_count < 8
+
+
+def _fallback_mindmap_from_text(*, source_text: str, file_name: str) -> Dict[str, Any]:
+    text = (source_text or "").strip()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    key_lines: List[str] = []
+    for line in lines:
+        if line.startswith("- "):
+            candidate = line[2:].strip()
+            if candidate:
+                key_lines.append(candidate)
+        elif line.startswith("[Doan "):
+            continue
+    if not key_lines:
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        key_lines = [sentence.strip() for sentence in sentences if sentence.strip()]
+
+    children = []
+    seen = set()
+    for item in key_lines:
+        normalized = re.sub(r"\s+", " ", item).strip()
+        if not normalized:
+            continue
+        key = normalized.lower()[:120]
+        if key in seen:
+            continue
+        seen.add(key)
+        children.append(
+            {
+                "title": normalized[:120],
+                "children": [],
+            }
+        )
+        if len(children) >= 10:
+            break
+
+    if not children:
+        children = [{"title": "Noi dung tai lieu", "children": []}]
+
+    return {
+        "title": file_name or "Document",
+        "children": children,
+    }
