@@ -79,6 +79,7 @@ Tai lieu:
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.2,
+            "max_tokens": 1400,
             "response_format": {"type": "json_object"},
         },
         timeout=timeout,

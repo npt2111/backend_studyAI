@@ -3,6 +3,7 @@ import logging
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from uuid import uuid4
 
 from config.services import supabase_client
 from config.services.supabase_client import SupabaseConfigError
@@ -291,7 +292,20 @@ class SendDocumentChatMessageApiView(APIView):
                     content=reply,
                 )
                 if assistant_status >= 400:
-                    return Response({"message": "Luu cau tra loi that bai.", "error": assistant_row}, status=status.HTTP_502_BAD_GATEWAY)
+                    logger.warning(
+                        "Failed to persist assistant reply for session_id=%s status=%s error=%s",
+                        session_id,
+                        assistant_status,
+                        assistant_row,
+                    )
+                    assistant_row = {
+                        "id_message": str(uuid4()),
+                        "id_chat_session": session_id,
+                        "id_user": user_id,
+                        "id_read": read_id,
+                        "role": "assistant",
+                        "content": reply,
+                    }
                 supabase_client.touch_document_chat_session(session_id)
             except GeminiChatError as exc:
                 logger.warning(
