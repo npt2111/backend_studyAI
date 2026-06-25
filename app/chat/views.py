@@ -16,6 +16,7 @@ from .serializers import (
 )
 from .services import (
     CHAT_GREETING,
+    GeminiChatError,
     generate_document_chat_reply,
     normalize_chat_message,
     normalize_chat_session,
@@ -292,8 +293,23 @@ class SendDocumentChatMessageApiView(APIView):
                 if assistant_status >= 400:
                     return Response({"message": "Luu cau tra loi that bai.", "error": assistant_row}, status=status.HTTP_502_BAD_GATEWAY)
                 supabase_client.touch_document_chat_session(session_id)
+            except GeminiChatError as exc:
+                logger.warning(
+                    "Document chat AI failed for session_id=%s status=%s detail=%s",
+                    session_id,
+                    exc.status_code,
+                    exc.detail,
+                )
+                return Response(
+                    {"message": exc.public_message},
+                    status=exc.status_code,
+                )
             except Exception as exc:
-                return Response({"message": str(exc) if str(exc) else "AI tra loi that bai."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                logger.exception("Unexpected document chat AI failure for session_id=%s", session_id)
+                return Response(
+                    {"message": "AI chua tra loi duoc, vui long thu lai."},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
 
             return Response(
                 {
