@@ -6,22 +6,24 @@ from django.conf import settings
 
 
 CHAT_GREETING = (
-    "Xin chao, minh la StudyBuddy AI. Minh da san sang doc cung ban tai lieu nay. "
-    "Ban muon hoi phan nao truoc?"
+    "Xin chào, mình là StudyBuddy AI. Mình đã sẵn sàng đọc cùng bạn tài liệu này. "
+    "Bạn muốn hỏi phần nào trước?"
 )
 
 CHAT_SYSTEM_PROMPT = """
-Ban la StudyBuddy AI, tro ly hoc tap than thien bang tieng Viet.
-Chi tra loi dua tren NOI DUNG TAI LIEU duoc cung cap va lich su hoi dap trong phien chat.
-Neu tai lieu khong co du thong tin, noi ro "Trong tai lieu nay minh chua thay thong tin do" va goi y nguoi dung hoi theo phan co trong tai lieu.
-Tra loi than thien, dung trong tam, khong dai dong.
-Uu tien cau tra loi ngan gon 3-6 cau; chi dung bullet khi that su can.
-Khong bia dat ngoai tai lieu.
+Bạn là StudyBuddy AI, trợ lý học tập thân thiện.
+Bắt buộc trả lời 100% bằng tiếng Việt có dấu.
+Chỉ trả lời dựa trên NGỮ CẢNH RAG TỪ TÀI LIỆU và lịch sử chat được cung cấp.
+Nếu tài liệu không có đủ thông tin, nói rõ "Trong tài liệu này mình chưa thấy thông tin đó" và gợi ý người dùng hỏi theo phần có trong tài liệu.
+Trả lời đúng trọng tâm, tự nhiên, không dài dòng.
+Ưu tiên 3-6 câu; chỉ dùng gạch đầu dòng ngắn khi thật sự cần.
+Không dùng tiếng Anh trừ tên riêng, thuật ngữ kỹ thuật bắt buộc, mã lệnh hoặc ký hiệu trong tài liệu.
+Không bịa đặt ngoài tài liệu.
 """.strip()
 
 
 class AiChatError(RuntimeError):
-    public_message = "AI dang ban, vui long thu lai sau."
+    public_message = "AI đang bận, vui lòng thử lại sau."
     status_code = 502
 
     def __init__(self, public_message: Optional[str] = None, *, status_code: int = 502, detail: str = ""):
@@ -32,7 +34,7 @@ class AiChatError(RuntimeError):
 
 
 class AiChatTemporaryError(AiChatError):
-    public_message = "AI dang qua tai, vui long thu lai sau it phut."
+    public_message = "AI đang quá tải, vui lòng thử lại sau ít phút."
     status_code = 503
 
 
@@ -86,7 +88,8 @@ def generate_document_chat_reply(
             file_name=file_name,
             history=history,
             context_chunks=context_chunks,
-            reason="CHAT_GROQ_API_KEY hoac GROQ_API_KEY_2 chua duoc cau hinh.",
+            user_message=user_message,
+            reason="CHAT_GROQ_API_KEY hoặc GROQ_API_KEY_2 chưa được cấu hình.",
         )
     if not source and not context_chunks:
         return _fallback_chat_reply(
@@ -94,50 +97,39 @@ def generate_document_chat_reply(
             file_name=file_name,
             history=history,
             context_chunks=context_chunks,
-            reason="Khong co noi dung tai lieu de tra loi.",
+            user_message=user_message,
+            reason="Không có nội dung tài liệu để trả lời.",
         )
 
     source_context = _build_rag_context(source_text=source, context_chunks=context_chunks)
     history_text = _build_history_text(history)
     prompt = f"""
-Ten tai lieu: {file_name or "Document"}
+Tên tài liệu: {file_name or "Document"}
 
-NGU CANH RAG TU TAI LIEU:
+NGỮ CẢNH RAG TỪ TÀI LIỆU:
 {source_context}
 
-LICH SU CHAT GAN DAY:
+LỊCH SỬ CHAT GẦN ĐÂY:
 {history_text}
 
-CAU HOI CUA NGUOI HOC:
+CÂU HỎI CỦA NGƯỜI HỌC:
 {user_message}
 
-Yeu cau tra loi:
-- Tra loi bang tieng Viet, tu nhien va than thien.
-- Bam sat ngu canh RAG, dung trong tam cau hoi.
-- Khong tra loi dai dong; mac dinh 3-6 cau.
-- Neu can liet ke, dung bullet ngan.
-- Neu ngu canh khong du thong tin, noi ro minh chua thay thong tin do trong tai lieu.
+Yêu cầu trả lời:
+- Trả lời 100% bằng tiếng Việt có dấu.
+- Bám sát ngữ cảnh RAG, đúng trọng tâm câu hỏi.
+- Không trả lời dài dòng; mặc định 3-6 câu.
+- Nếu cần liệt kê, dùng gạch đầu dòng ngắn.
+- Nếu ngữ cảnh không đủ thông tin, nói rõ mình chưa thấy thông tin đó trong tài liệu.
+- Không dùng tiếng Anh trừ tên riêng, thuật ngữ kỹ thuật bắt buộc, mã lệnh hoặc ký hiệu trong tài liệu.
 """.strip()
 
     base_url = str(getattr(settings, "GROQ_BASE_URL", "https://api.groq.com/openai/v1")).rstrip("/")
     timeout = int(getattr(settings, "CHAT_GROQ_TIMEOUT_SECONDS", getattr(settings, "GROQ_TIMEOUT_SECONDS", 120)))
     payload = {
-        "systemInstruction": {
-            "parts": [
-                {
-                    "text": CHAT_SYSTEM_PROMPT,
-                }
-            ]
-        },
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "text": prompt,
-                    }
-                ],
-            }
+        "messages": [
+            {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
         ],
         "temperature": 0.25,
         "top_p": 0.9,
@@ -145,14 +137,14 @@ Yeu cau tra loi:
     }
 
     try:
-        response_payload = _post_gemini_with_retry(
+        response_payload = _post_groq_with_retry(
             base_url=base_url,
             api_key=api_key,
             models=_chat_model_candidates(),
             payload=payload,
             timeout=timeout,
         )
-        text = _extract_gemini_text(response_payload).strip()
+        text = _extract_groq_text(response_payload).strip()
         if text:
             return text
     except AiChatTemporaryError as exc:
@@ -161,6 +153,7 @@ Yeu cau tra loi:
             file_name=file_name,
             history=history,
             context_chunks=context_chunks,
+            user_message=user_message,
             reason=exc.public_message,
         )
     except AiChatError as exc:
@@ -169,7 +162,17 @@ Yeu cau tra loi:
             file_name=file_name,
             history=history,
             context_chunks=context_chunks,
+            user_message=user_message,
             reason=exc.public_message,
+        )
+    except Exception as exc:
+        return _fallback_chat_reply(
+            source_text=source,
+            file_name=file_name,
+            history=history,
+            context_chunks=context_chunks,
+            user_message=user_message,
+            reason=f"Lỗi ngoài ý muốn khi gọi AI: {exc}",
         )
 
     return _fallback_chat_reply(
@@ -177,7 +180,8 @@ Yeu cau tra loi:
         file_name=file_name,
         history=history,
         context_chunks=context_chunks,
-        reason="AI chua tao duoc cau tra loi, vui long thu lai.",
+        user_message=user_message,
+        reason="AI chưa tạo được câu trả lời, vui lòng thử lại.",
     )
 
 
@@ -190,11 +194,15 @@ def _chat_groq_api_key() -> str:
 
 
 def _chat_model_candidates() -> List[str]:
-    primary = str(
-        getattr(settings, "CHAT_GEMINI_MODEL", getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash-lite"))
-        or "gemini-2.5-flash-lite"
-    ).strip()
-    return primary or "gemini-2.5-flash-lite"
+    primary = str(getattr(settings, "CHAT_GROQ_MODEL", getattr(settings, "GROQ_MODEL", "llama-3.3-70b-versatile"))).strip()
+    fallback_raw = str(getattr(settings, "GROQ_FALLBACK_MODELS", "") or "").strip()
+    models = [primary] if primary else []
+    models.extend(model.strip() for model in fallback_raw.split(",") if model.strip())
+    unique_models: List[str] = []
+    for model in models:
+        if model and model not in unique_models:
+            unique_models.append(model)
+    return unique_models or ["llama-3.3-70b-versatile"]
 
 
 def _build_rag_context(*, source_text: str, context_chunks: List[Dict[str, Any]]) -> str:
@@ -212,7 +220,7 @@ def _build_rag_context(*, source_text: str, context_chunks: List[Dict[str, Any]]
                 continue
             seen.add(key)
             chunk_index = chunk.get("chunk_index", index)
-            blocks.append(f"[Doan {chunk_index}]\n{content[:max_chunk_chars]}")
+            blocks.append(f"[Đoạn {chunk_index}]\n{content[:max_chunk_chars]}")
         context = "\n\n".join(blocks).strip()
         if context:
             return context[:max_context_chars]
@@ -223,65 +231,72 @@ def _build_rag_context(*, source_text: str, context_chunks: List[Dict[str, Any]]
 def _build_history_text(history: List[Dict[str, Any]]) -> str:
     history_lines: List[str] = []
     for item in history[-int(getattr(settings, "CHAT_HISTORY_LIMIT", 12)):]:
-        role = "Nguoi hoc" if item.get("role") == "user" else "StudyBuddy"
+        role = "Người học" if item.get("role") == "user" else "StudyBuddy"
         content = str(item.get("content") or "").strip()
         if content:
             history_lines.append(f"{role}: {content}")
-    return "\n".join(history_lines) if history_lines else "Chua co."
+    return "\n".join(history_lines) if history_lines else "Chưa có."
 
 
 def _post_groq_with_retry(
     *,
     base_url: str,
     api_key: str,
-    model: str,
+    models: List[str],
     payload: Dict[str, Any],
     timeout: int,
 ) -> Dict[str, Any]:
-    retry_count = max(1, int(getattr(settings, "GEMINI_RETRY_COUNT", 2)))
-    retry_delay = float(getattr(settings, "GEMINI_RETRY_DELAY_SECONDS", 0.8))
+    retry_count = max(1, int(getattr(settings, "GROQ_RETRY_COUNT", 2)))
+    retry_delay = float(getattr(settings, "GROQ_RETRY_DELAY_SECONDS", 0.8))
     last_status = 0
     last_detail = ""
 
-    for attempt in range(retry_count + 1):
-        try:
-            response = requests.post(
-                f"{base_url}/models/{model}:generateContent",
-                params={"key": api_key},
-                json=payload,
-                timeout=timeout,
-            )
-        except requests.Timeout as exc:
-            last_status = 504
-            last_detail = str(exc)
-            if attempt < retry_count:
-                time.sleep(retry_delay * (attempt + 1))
-                continue
-            break
-        except requests.RequestException as exc:
-            last_status = 503
-            last_detail = str(exc)
-            if attempt < retry_count:
-                time.sleep(retry_delay * (attempt + 1))
-                continue
-            break
-
-        if response.status_code < 400:
+    for model in models:
+        model_payload = {**payload, "model": model}
+        for attempt in range(retry_count + 1):
             try:
-                return response.json()
-            except ValueError as exc:
-                raise AiChatError("AI tra ve du lieu khong hop le.", detail=str(exc))
+                response = requests.post(
+                    f"{base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=model_payload,
+                    timeout=timeout,
+                )
+            except requests.Timeout as exc:
+                last_status = 504
+                last_detail = str(exc)
+                if attempt < retry_count:
+                    time.sleep(retry_delay * (attempt + 1))
+                    continue
+                break
+            except requests.RequestException as exc:
+                last_status = 503
+                last_detail = str(exc)
+                if attempt < retry_count:
+                    time.sleep(retry_delay * (attempt + 1))
+                    continue
+                break
 
-        last_status = response.status_code
-        last_detail = _extract_ai_error_message(response)
-        if response.status_code in {429, 500, 502, 503, 504} and attempt < retry_count:
-            time.sleep(retry_delay * (attempt + 1))
-            continue
-        break
+            if response.status_code < 400:
+                try:
+                    return response.json()
+                except ValueError as exc:
+                    raise AiChatError("AI trả về dữ liệu không hợp lệ.", detail=str(exc))
+
+            last_status = response.status_code
+            last_detail = _extract_ai_error_message(response)
+            if response.status_code in {400, 404}:
+                break
+            if response.status_code in {429, 500, 502, 503, 504} and attempt < retry_count:
+                time.sleep(retry_delay * (attempt + 1))
+                continue
+            break
 
     if last_status in {429, 500, 502, 503, 504}:
         raise AiChatTemporaryError(detail=last_detail)
-    raise AiChatError("AI chua tra loi duoc, vui long thu lai.", status_code=502, detail=last_detail)
+    raise AiChatError("AI chưa trả lời được, vui lòng thử lại.", status_code=502, detail=last_detail)
 
 
 def _extract_ai_error_message(response: requests.Response) -> str:
@@ -295,10 +310,10 @@ def _extract_ai_error_message(response: requests.Response) -> str:
     return str(payload)[:300]
 
 
-def _extract_gemini_text(payload: Dict[str, Any]) -> str:
-    candidates = payload.get("candidates") if isinstance(payload, dict) else None
-    if not candidates:
-        raise AiChatError("AI chua tao duoc cau tra loi, vui long thu lai.")
+def _extract_groq_text(payload: Dict[str, Any]) -> str:
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not choices:
+        raise AiChatError("AI chưa tạo được câu trả lời, vui lòng thử lại.")
     first = choices[0] if isinstance(choices[0], dict) else {}
     message = first.get("message") if isinstance(first, dict) else {}
     text = str((message or {}).get("content") or "").strip()
@@ -307,7 +322,7 @@ def _extract_gemini_text(payload: Dict[str, Any]) -> str:
     finish_reason = str(first.get("finish_reason") or "").strip()
     if finish_reason:
         raise AiChatTemporaryError(detail=finish_reason)
-    raise AiChatError("AI chua tao duoc cau tra loi, vui long thu lai.")
+    raise AiChatError("AI chưa tạo được câu trả lời, vui lòng thử lại.")
 
 
 def _fallback_chat_reply(
@@ -316,6 +331,7 @@ def _fallback_chat_reply(
     file_name: str,
     history: List[Dict[str, Any]],
     context_chunks: List[Dict[str, Any]],
+    user_message: str,
     reason: str,
 ) -> str:
     pieces: List[str] = []
@@ -329,20 +345,13 @@ def _fallback_chat_reply(
 
     excerpt = "\n".join(f"- {text[:360]}" for text in pieces[:4]).strip()
     if not excerpt:
-        excerpt = "Minh chua trich duoc du noi dung lien quan tu tai lieu."
+        excerpt = "Mình chưa trích được đủ nội dung liên quan từ tài liệu."
 
-    recent_q = ""
-    for item in reversed(history):
-        if str(item.get("role") or "").lower() == "user":
-            recent_q = str(item.get("content") or "").strip()
-            if recent_q:
-                break
+    lead = f"Trong tài liệu {file_name or 'này'}, mình thấy phần liên quan nhất là:"
+    if user_message.strip():
+        lead = f'Với câu hỏi "{user_message.strip()}", trong tài liệu {file_name or "này"} mình thấy phần liên quan nhất là:'
 
-    lead = f"Trong tai lieu {file_name or 'nay'}, minh thay phan lien quan nhat la:"
-    if recent_q:
-        lead = f'Voi cau hoi "{recent_q}", trong tai lieu {file_name or "nay"} minh thay phan lien quan nhat la:'
-
-    tail = "Ban co the hoi cu the hon mot y de minh khoanh dung doan can xem."
+    tail = "Bạn có thể hỏi cụ thể hơn một ý để mình khoanh đúng đoạn cần xem."
     if reason:
-        tail = f"{tail} (Tam thoi AI chua tao duoc cau tra loi truc tiep, nen minh tra loi bang noi dung tai lieu.)"
+        tail = f"{tail} Tạm thời AI chưa tạo được câu trả lời trực tiếp, nên mình trả lời bằng phần nội dung tài liệu liên quan nhất."
     return f"{lead}\n{excerpt}\n\n{tail}".strip()

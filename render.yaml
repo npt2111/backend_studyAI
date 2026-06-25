@@ -25,5 +25,25 @@ services:
         sync: false
       - key: FIREBASE_SERVICE_ACCOUNT_JSON
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_API_KEY_2
+        sync: false
+      - key: CHAT_GROQ_API_KEY
+        sync: false
+      - key: CHAT_GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: CHAT_SOURCE_MAX_CHARS
+        value: 30000
+      - key: CHAT_CONTEXT_MAX_CHARS
+        value: 26000
+      - key: CHAT_CONTEXT_CHUNK_MAX_CHARS
+        value: 3500
+      - key: CHAT_RAG_MATCH_LIMIT
+        value: 8
+      - key: CHAT_RAG_MATCH_THRESHOLD
+        value: 0.0
       - key: CRON_SECRET
         generateValue: true
