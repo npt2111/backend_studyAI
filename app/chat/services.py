@@ -76,13 +76,14 @@ def generate_document_chat_reply(
     user_message: str,
     context_chunks: List[Dict[str, Any]] = None,
 ) -> str:
-    api_key = str(getattr(settings, "GROQ_API_KEY", "") or "").strip()
+    api_key = str(getattr(settings, "GEMINI_API_KEY", "") or "").strip()
     if not api_key:
-        raise RuntimeError("GROQ_API_KEY chua duoc cau hinh.")
+        raise RuntimeError("GEMINI_API_KEY chua duoc cau hinh.")
 
     source = (source_text or "").strip()
     if not source:
         raise RuntimeError("Khong co extracted_text de chat voi tai lieu.")
+
     context_chunks = context_chunks or []
     if context_chunks:
         context_blocks = []
@@ -118,27 +119,43 @@ CAU HOI CUA NGUOI HOC:
 Hay tra loi nhu StudyBuddy AI: than thien, ro rang, dung tai lieu, khong bia dat.
 """.strip()
 
-    base_url = str(getattr(settings, "GROQ_BASE_URL", "https://api.groq.com/openai/v1")).rstrip("/")
-    models = _chat_model_candidates()
-    timeout = int(getattr(settings, "GROQ_TIMEOUT_SECONDS", 60))
+    base_url = str(getattr(settings, "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")).rstrip("/")
+    model = _chat_model()
+    timeout = int(getattr(settings, "GEMINI_TIMEOUT_SECONDS", 120))
     payload = {
-        "messages": [
-            {"role": "system", "content": CHAT_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
+        "systemInstruction": {
+            "parts": [
+                {
+                    "text": CHAT_SYSTEM_PROMPT,
+                }
+            ]
+        },
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": prompt,
+                    }
+                ],
+            }
         ],
-        "temperature": 0.35,
-        "top_p": 0.9,
-        "max_tokens": 700,
+        "generationConfig": {
+            "temperature": 0.35,
+            "topP": 0.9,
+            "maxOutputTokens": 700,
+        },
     }
+
     try:
-        response_payload = _post_groq_with_retry(
+        response_payload = _post_gemini_with_retry(
             base_url=base_url,
             api_key=api_key,
-            models=models,
+            model=model,
             payload=payload,
             timeout=timeout,
         )
-        text = _extract_groq_text(response_payload).strip()
+        text = _extract_gemini_text(response_payload).strip()
         if text:
             return text
     except AiChatTemporaryError as exc:
@@ -167,73 +184,62 @@ Hay tra loi nhu StudyBuddy AI: than thien, ro rang, dung tai lieu, khong bia dat
     )
 
 
-def _chat_model_candidates() -> List[str]:
+def _chat_model() -> str:
     primary = str(
-        getattr(settings, "CHAT_GROQ_MODEL", getattr(settings, "GROQ_MODEL", "llama-3.3-70b-versatile"))
-        or "llama-3.3-70b-versatile"
+        getattr(settings, "CHAT_GEMINI_MODEL", getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash-lite"))
+        or "gemini-2.5-flash-lite"
     ).strip()
-    fallback_raw = str(getattr(settings, "GROQ_FALLBACK_MODELS", "llama-3.1-8b-instant") or "")
-    candidates = [primary]
-    candidates.extend(item.strip() for item in fallback_raw.split(",") if item.strip())
-    unique: List[str] = []
-    for model in candidates:
-        if model and model not in unique:
-            unique.append(model)
-    return unique or ["llama-3.3-70b-versatile"]
+    return primary or "gemini-2.5-flash-lite"
 
 
-def _post_groq_with_retry(
+def _post_gemini_with_retry(
     *,
     base_url: str,
     api_key: str,
-    models: List[str],
+    model: str,
     payload: Dict[str, Any],
     timeout: int,
 ) -> Dict[str, Any]:
-    retry_count = max(1, int(getattr(settings, "GROQ_RETRY_COUNT", 2)))
-    retry_delay = float(getattr(settings, "GROQ_RETRY_DELAY_SECONDS", 0.8))
+    retry_count = max(1, int(getattr(settings, "GEMINI_RETRY_COUNT", 2)))
+    retry_delay = float(getattr(settings, "GEMINI_RETRY_DELAY_SECONDS", 0.8))
     last_status = 0
     last_detail = ""
 
-    for model in models:
-        for attempt in range(retry_count + 1):
-            try:
-                response = requests.post(
-                    f"{base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={**payload, "model": model},
-                    timeout=timeout,
-                )
-            except requests.Timeout as exc:
-                last_status = 504
-                last_detail = str(exc)
-                if attempt < retry_count:
-                    time.sleep(retry_delay * (attempt + 1))
-                    continue
-                break
-            except requests.RequestException as exc:
-                last_status = 503
-                last_detail = str(exc)
-                if attempt < retry_count:
-                    time.sleep(retry_delay * (attempt + 1))
-                    continue
-                break
-
-            if response.status_code < 400:
-                try:
-                    return response.json()
-                except ValueError as exc:
-                    raise AiChatError("AI tra ve du lieu khong hop le.", detail=str(exc))
-
-            last_status = response.status_code
-            last_detail = _extract_ai_error_message(response)
-            if response.status_code in {429, 500, 502, 503, 504} and attempt < retry_count:
+    for attempt in range(retry_count + 1):
+        try:
+            response = requests.post(
+                f"{base_url}/models/{model}:generateContent",
+                params={"key": api_key},
+                json=payload,
+                timeout=timeout,
+            )
+        except requests.Timeout as exc:
+            last_status = 504
+            last_detail = str(exc)
+            if attempt < retry_count:
                 time.sleep(retry_delay * (attempt + 1))
                 continue
             break
+        except requests.RequestException as exc:
+            last_status = 503
+            last_detail = str(exc)
+            if attempt < retry_count:
+                time.sleep(retry_delay * (attempt + 1))
+                continue
+            break
+
+        if response.status_code < 400:
+            try:
+                return response.json()
+            except ValueError as exc:
+                raise AiChatError("AI tra ve du lieu khong hop le.", detail=str(exc))
+
+        last_status = response.status_code
+        last_detail = _extract_ai_error_message(response)
+        if response.status_code in {429, 500, 502, 503, 504} and attempt < retry_count:
+            time.sleep(retry_delay * (attempt + 1))
+            continue
+        break
 
     if last_status in {429, 500, 502, 503, 504}:
         raise AiChatTemporaryError(detail=last_detail)
@@ -251,12 +257,26 @@ def _extract_ai_error_message(response: requests.Response) -> str:
     return str(payload)[:300]
 
 
-def _extract_groq_text(payload: Dict[str, Any]) -> str:
-    choices = payload.get("choices") if isinstance(payload, dict) else None
-    if not choices:
+def _extract_gemini_text(payload: Dict[str, Any]) -> str:
+    candidates = payload.get("candidates") if isinstance(payload, dict) else None
+    if not candidates:
         raise AiChatError("AI chua tao duoc cau tra loi, vui long thu lai.")
-    message = (choices[0] or {}).get("message") if isinstance(choices[0], dict) else {}
-    return str((message or {}).get("content") or "").strip()
+    first = candidates[0] if isinstance(candidates[0], dict) else {}
+    content = first.get("content") if isinstance(first, dict) else {}
+    parts = content.get("parts") if isinstance(content, dict) else None
+    texts: List[str] = []
+    if isinstance(parts, list):
+        for part in parts:
+            if isinstance(part, dict):
+                text = str(part.get("text") or "").strip()
+                if text:
+                    texts.append(text)
+    if texts:
+        return "\n".join(texts).strip()
+    finish_reason = str(first.get("finishReason") or "").strip()
+    if finish_reason:
+        raise AiChatTemporaryError(public_message="AI dang qua tai, vui long thu lai sau it phut.", detail=finish_reason)
+    raise AiChatError("AI chua tao duoc cau tra loi, vui long thu lai.")
 
 
 def _fallback_chat_reply(
@@ -278,7 +298,7 @@ def _fallback_chat_reply(
 
     excerpt = "\n".join(f"- {text[:320]}" for text in pieces[:3]).strip()
     if not excerpt:
-        excerpt = "Mình chưa trích được đủ nội dung liên quan từ tài liệu."
+        excerpt = "Minh chua trich duoc du noi dung lien quan tu tai lieu."
 
     recent_q = ""
     for item in reversed(history):
@@ -287,11 +307,11 @@ def _fallback_chat_reply(
             if recent_q:
                 break
 
-    lead = f"Trong tài liệu {file_name or 'này'}, mình thấy phần liên quan nhất là:"
+    lead = f"Trong tai lieu {file_name or 'nay'}, minh thay phan lien quan nhat la:"
     if recent_q:
-        lead = f"Với câu hỏi \"{recent_q}\", trong tài liệu {file_name or 'này'} mình thấy phần liên quan nhất là:"
+        lead = f'Voi cau hoi "{recent_q}", trong tai lieu {file_name or "nay"} minh thay phan lien quan nhat la:'
 
-    tail = "Bạn có thể gửi thêm một câu hỏi cụ thể hơn để mình khoanh đúng đoạn cần xem."
+    tail = "Ban co the gui them mot cau hoi cu the hon de minh khoanh dung doan can xem."
     if reason:
-        tail = f"{tail} (Tạm thời AI đang quá tải, nên mình trả lời bằng nội dung tài liệu.)"
+        tail = f"{tail} (Tam thoi AI dang qua tai, nen minh tra loi bang noi dung tai lieu.)"
     return f"{lead}\n{excerpt}\n\n{tail}".strip()
