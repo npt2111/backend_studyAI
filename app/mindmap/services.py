@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from typing import Any, Dict, List
 
 import requests
@@ -32,9 +33,9 @@ def normalize_mindmap(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def generate_mindmap(*, source_text: str, file_name: str) -> Dict[str, Any]:
-    api_key = str(getattr(settings, "GEMINI_API_KEY", "") or "").strip()
+    api_key = str(getattr(settings, "GROQ_API_KEY", "") or "").strip()
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY chua duoc cau hinh.")
+        raise RuntimeError("GROQ_API_KEY chua duoc cau hinh.")
 
     source = (source_text or "").strip()
     if not source:
@@ -63,26 +64,23 @@ Tai lieu:
 {source}
 """.strip()
 
-    base_url = str(getattr(settings, "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")).rstrip("/")
-    model = str(getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"))
-    timeout = int(getattr(settings, "GEMINI_TIMEOUT_SECONDS", 120))
-    response = requests.post(
-        f"{base_url}/models/{model}:generateContent",
-        params={"key": api_key},
-        json={
-            "contents": [{"parts": [{"text": f"{MINDMAP_PROMPT}\n\n{prompt}"}]}],
-            "generationConfig": {
-                "temperature": 0.2,
-                "responseMimeType": "application/json",
-            },
+    base_url = str(getattr(settings, "GROQ_BASE_URL", "https://api.groq.com/openai/v1")).rstrip("/")
+    timeout = int(getattr(settings, "GROQ_TIMEOUT_SECONDS", 120))
+    payload = _post_groq_with_retry(
+        base_url=base_url,
+        api_key=api_key,
+        models=_mindmap_model_candidates(),
+        payload={
+            "messages": [
+                {"role": "system", "content": MINDMAP_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"},
         },
         timeout=timeout,
     )
-    if response.status_code >= 400:
-        raise RuntimeError(f"Gemini loi {response.status_code}: {response.text[:500]}")
-
-    payload = response.json()
-    text = _extract_gemini_text(payload)
+    text = _extract_groq_text(payload)
     parsed = _parse_json(text)
     tree = _sanitize_node(parsed)
     markdown = mindmap_json_to_markdown(tree)
@@ -91,6 +89,64 @@ Tai lieu:
         "markdown": markdown,
         "raw_response": text,
     }
+
+
+def _mindmap_model_candidates() -> List[str]:
+    primary = str(
+        getattr(settings, "MINDMAP_GROQ_MODEL", getattr(settings, "GROQ_MODEL", "llama-3.3-70b-versatile"))
+        or "llama-3.3-70b-versatile"
+    ).strip()
+    fallback_raw = str(getattr(settings, "GROQ_FALLBACK_MODELS", "llama-3.1-8b-instant") or "")
+    candidates = [primary]
+    candidates.extend(item.strip() for item in fallback_raw.split(",") if item.strip())
+    unique: List[str] = []
+    for model in candidates:
+        if model and model not in unique:
+            unique.append(model)
+    return unique or ["llama-3.3-70b-versatile"]
+
+
+def _post_groq_with_retry(
+    *,
+    base_url: str,
+    api_key: str,
+    models: List[str],
+    payload: Dict[str, Any],
+    timeout: int,
+) -> Dict[str, Any]:
+    retry_count = max(1, int(getattr(settings, "GROQ_RETRY_COUNT", 2)))
+    retry_delay = float(getattr(settings, "GROQ_RETRY_DELAY_SECONDS", 0.8))
+    last_error = ""
+
+    for model in models:
+        for attempt in range(retry_count + 1):
+            try:
+                response = requests.post(
+                    f"{base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={**payload, "model": model},
+                    timeout=timeout,
+                )
+            except requests.RequestException as exc:
+                last_error = str(exc)
+                if attempt < retry_count:
+                    time.sleep(retry_delay * (attempt + 1))
+                    continue
+                break
+
+            if response.status_code < 400:
+                return response.json()
+
+            last_error = f"Groq loi {response.status_code}: {response.text[:300]}"
+            if response.status_code in {429, 500, 502, 503, 504} and attempt < retry_count:
+                time.sleep(retry_delay * (attempt + 1))
+                continue
+            break
+
+    raise RuntimeError(last_error or "Groq tao mindmap that bai.")
 
 
 def mindmap_json_to_markdown(node: Dict[str, Any], level: int = 0) -> str:
@@ -103,14 +159,14 @@ def mindmap_json_to_markdown(node: Dict[str, Any], level: int = 0) -> str:
     return "\n".join(lines)
 
 
-def _extract_gemini_text(payload: Dict[str, Any]) -> str:
-    candidates = payload.get("candidates") if isinstance(payload, dict) else None
-    if not candidates:
-        raise RuntimeError("Gemini khong tra ve candidates.")
-    parts = (((candidates[0] or {}).get("content") or {}).get("parts") or [])
-    text = "\n".join(str(part.get("text") or "") for part in parts if isinstance(part, dict)).strip()
+def _extract_groq_text(payload: Dict[str, Any]) -> str:
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not choices:
+        raise RuntimeError("Groq khong tra ve choices.")
+    message = (choices[0] or {}).get("message") if isinstance(choices[0], dict) else {}
+    text = str((message or {}).get("content") or "").strip()
     if not text:
-        raise RuntimeError("Gemini tra ve noi dung rong.")
+        raise RuntimeError("Groq tra ve noi dung rong.")
     return text
 
 

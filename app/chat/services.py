@@ -19,7 +19,7 @@ Giai thich muot ma, dung trong tam, co the dung bullet ngan neu can.
 """.strip()
 
 
-class GeminiChatError(RuntimeError):
+class AiChatError(RuntimeError):
     public_message = "AI dang ban, vui long thu lai sau."
     status_code = 502
 
@@ -30,9 +30,13 @@ class GeminiChatError(RuntimeError):
         self.detail = detail
 
 
-class GeminiChatTemporaryError(GeminiChatError):
+class AiChatTemporaryError(AiChatError):
     public_message = "AI dang qua tai, vui long thu lai sau it phut."
     status_code = 503
+
+
+# Backward-compatible import name for older view code.
+GeminiChatError = AiChatError
 
 
 def normalize_chat_session(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -72,9 +76,9 @@ def generate_document_chat_reply(
     user_message: str,
     context_chunks: List[Dict[str, Any]] = None,
 ) -> str:
-    api_key = str(getattr(settings, "GEMINI_API_KEY", "") or "").strip()
+    api_key = str(getattr(settings, "GROQ_API_KEY", "") or "").strip()
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY chua duoc cau hinh.")
+        raise RuntimeError("GROQ_API_KEY chua duoc cau hinh.")
 
     source = (source_text or "").strip()
     if not source:
@@ -114,18 +118,19 @@ CAU HOI CUA NGUOI HOC:
 Hay tra loi nhu StudyBuddy AI: than thien, ro rang, dung tai lieu, khong bia dat.
 """.strip()
 
-    base_url = str(getattr(settings, "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")).rstrip("/")
+    base_url = str(getattr(settings, "GROQ_BASE_URL", "https://api.groq.com/openai/v1")).rstrip("/")
     models = _chat_model_candidates()
-    timeout = int(getattr(settings, "GEMINI_TIMEOUT_SECONDS", 60))
+    timeout = int(getattr(settings, "GROQ_TIMEOUT_SECONDS", 60))
     payload = {
-        "contents": [{"parts": [{"text": f"{CHAT_SYSTEM_PROMPT}\n\n{prompt}"}]}],
-        "generationConfig": {
-            "temperature": 0.35,
-            "topP": 0.9,
-            "maxOutputTokens": 700,
-        },
+        "messages": [
+            {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.35,
+        "top_p": 0.9,
+        "max_tokens": 700,
     }
-    response_payload = _post_gemini_with_retry(
+    response_payload = _post_groq_with_retry(
         base_url=base_url,
         api_key=api_key,
         models=models,
@@ -133,25 +138,28 @@ Hay tra loi nhu StudyBuddy AI: than thien, ro rang, dung tai lieu, khong bia dat
         timeout=timeout,
     )
 
-    text = _extract_gemini_text(response_payload).strip()
+    text = _extract_groq_text(response_payload).strip()
     if not text:
-        raise GeminiChatError("AI chua tao duoc cau tra loi, vui long thu lai.")
+        raise AiChatError("AI chua tao duoc cau tra loi, vui long thu lai.")
     return text
 
 
 def _chat_model_candidates() -> List[str]:
-    primary = str(getattr(settings, "CHAT_GEMINI_MODEL", "gemini-2.5-flash-lite") or "gemini-2.5-flash-lite").strip()
-    fallback_raw = str(getattr(settings, "CHAT_GEMINI_FALLBACK_MODELS", "gemini-2.0-flash-lite,gemini-1.5-flash") or "")
+    primary = str(
+        getattr(settings, "CHAT_GROQ_MODEL", getattr(settings, "GROQ_MODEL", "llama-3.3-70b-versatile"))
+        or "llama-3.3-70b-versatile"
+    ).strip()
+    fallback_raw = str(getattr(settings, "GROQ_FALLBACK_MODELS", "llama-3.1-8b-instant") or "")
     candidates = [primary]
     candidates.extend(item.strip() for item in fallback_raw.split(",") if item.strip())
     unique: List[str] = []
     for model in candidates:
         if model and model not in unique:
             unique.append(model)
-    return unique or ["gemini-2.5-flash-lite"]
+    return unique or ["llama-3.3-70b-versatile"]
 
 
-def _post_gemini_with_retry(
+def _post_groq_with_retry(
     *,
     base_url: str,
     api_key: str,
@@ -159,19 +167,21 @@ def _post_gemini_with_retry(
     payload: Dict[str, Any],
     timeout: int,
 ) -> Dict[str, Any]:
-    retry_count = max(1, int(getattr(settings, "CHAT_GEMINI_RETRY_COUNT", 2)))
-    retry_delay = float(getattr(settings, "CHAT_GEMINI_RETRY_DELAY_SECONDS", 0.8))
+    retry_count = max(1, int(getattr(settings, "GROQ_RETRY_COUNT", 2)))
+    retry_delay = float(getattr(settings, "GROQ_RETRY_DELAY_SECONDS", 0.8))
     last_status = 0
     last_detail = ""
 
     for model in models:
-        model_path = model if model.startswith("models/") else f"models/{model}"
         for attempt in range(retry_count + 1):
             try:
                 response = requests.post(
-                    f"{base_url}/{model_path}:generateContent",
-                    params={"key": api_key},
-                    json=payload,
+                    f"{base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={**payload, "model": model},
                     timeout=timeout,
                 )
             except requests.Timeout as exc:
@@ -193,21 +203,21 @@ def _post_gemini_with_retry(
                 try:
                     return response.json()
                 except ValueError as exc:
-                    raise GeminiChatError("AI tra ve du lieu khong hop le.", detail=str(exc))
+                    raise AiChatError("AI tra ve du lieu khong hop le.", detail=str(exc))
 
             last_status = response.status_code
-            last_detail = _extract_gemini_error_message(response)
+            last_detail = _extract_ai_error_message(response)
             if response.status_code in {429, 500, 502, 503, 504} and attempt < retry_count:
                 time.sleep(retry_delay * (attempt + 1))
                 continue
             break
 
     if last_status in {429, 500, 502, 503, 504}:
-        raise GeminiChatTemporaryError(detail=last_detail)
-    raise GeminiChatError("AI chua tra loi duoc, vui long thu lai.", status_code=502, detail=last_detail)
+        raise AiChatTemporaryError(detail=last_detail)
+    raise AiChatError("AI chua tra loi duoc, vui long thu lai.", status_code=502, detail=last_detail)
 
 
-def _extract_gemini_error_message(response: requests.Response) -> str:
+def _extract_ai_error_message(response: requests.Response) -> str:
     try:
         payload = response.json()
     except ValueError:
@@ -218,9 +228,9 @@ def _extract_gemini_error_message(response: requests.Response) -> str:
     return str(payload)[:300]
 
 
-def _extract_gemini_text(payload: Dict[str, Any]) -> str:
-    candidates = payload.get("candidates") if isinstance(payload, dict) else None
-    if not candidates:
-        raise GeminiChatError("AI chua tao duoc cau tra loi, vui long thu lai.")
-    parts = (((candidates[0] or {}).get("content") or {}).get("parts") or [])
-    return "\n".join(str(part.get("text") or "") for part in parts if isinstance(part, dict)).strip()
+def _extract_groq_text(payload: Dict[str, Any]) -> str:
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not choices:
+        raise AiChatError("AI chua tao duoc cau tra loi, vui long thu lai.")
+    message = (choices[0] or {}).get("message") if isinstance(choices[0], dict) else {}
+    return str((message or {}).get("content") or "").strip()

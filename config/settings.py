@@ -154,18 +154,21 @@ PDF_OCR_MAX_PAGES = int(os.getenv("PDF_OCR_MAX_PAGES", "0"))
 # Supabase Storage
 SUPABASE_STORAGE_BUCKET  = os.getenv("SUPABASE_STORAGE_BUCKET", "study-documents")
 
-# Groq quiz generation
+# Groq generation
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+CHAT_GROQ_MODEL = os.getenv("CHAT_GROQ_MODEL", GROQ_MODEL).strip()
+MINDMAP_GROQ_MODEL = os.getenv("MINDMAP_GROQ_MODEL", GROQ_MODEL).strip()
+GROQ_FALLBACK_MODELS = os.getenv("GROQ_FALLBACK_MODELS", "llama-3.1-8b-instant").strip()
 GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1").strip().rstrip("/")
 GROQ_TIMEOUT_SECONDS = int(os.getenv("GROQ_TIMEOUT_SECONDS", "120"))
+GROQ_RETRY_COUNT = int(os.getenv("GROQ_RETRY_COUNT", "2"))
+GROQ_RETRY_DELAY_SECONDS = float(os.getenv("GROQ_RETRY_DELAY_SECONDS", "0.8"))
 LEARNING_AI_TIMEOUT_SECONDS = int(os.getenv("LEARNING_AI_TIMEOUT_SECONDS", "25"))
 QUIZ_SOURCE_MAX_CHARS = int(os.getenv("QUIZ_SOURCE_MAX_CHARS", "16000"))
 
-# Gemini mindmap generation
+# Gemini embedding
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
-CHAT_GEMINI_MODEL = os.getenv("CHAT_GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
 GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").strip().rstrip("/")
 GEMINI_TIMEOUT_SECONDS = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "120"))
 MINDMAP_SOURCE_MAX_CHARS = int(os.getenv("MINDMAP_SOURCE_MAX_CHARS", "18000"))

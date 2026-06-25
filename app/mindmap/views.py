@@ -37,8 +37,12 @@ def _public_ai_error(raw: str) -> str:
     lowered = text.lower()
     if (
         "gemini" in lowered
+        or "groq" in lowered
         or "unavailable" in lowered
         or "high demand" in lowered
+        or "rate limit" in lowered
+        or "rate_limit" in lowered
+        or "quota" in lowered
         or "503" in lowered
         or "429" in lowered
     ):
