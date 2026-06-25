@@ -139,8 +139,8 @@ def retrieve_relevant_chunks(*, user_id: str, read_id: str, query: str) -> List[
         user_id=user_id,
         read_id=read_id,
         query_embedding=query_embedding,
-        match_count=int(getattr(settings, "RAG_MATCH_LIMIT", 5)),
-        match_threshold=float(getattr(settings, "RAG_MATCH_THRESHOLD", 0.2)),
+        match_count=int(getattr(settings, "CHAT_RAG_MATCH_LIMIT", getattr(settings, "RAG_MATCH_LIMIT", 5))),
+        match_threshold=float(getattr(settings, "CHAT_RAG_MATCH_THRESHOLD", getattr(settings, "RAG_MATCH_THRESHOLD", 0.2))),
     )
     if status_code >= 400:
         raise RuntimeError("Truy van document chunks that bai.")

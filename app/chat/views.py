@@ -57,8 +57,6 @@ def _load_read_result(user_id: str, read_id: str):
         return None, Response({"message": "Khong tim thay ket qua doc file."}, status=status.HTTP_404_NOT_FOUND)
     if str(read_row.get("id_user")) != user_id:
         return None, Response({"message": "Ban khong co quyen chat voi tai lieu nay."}, status=status.HTTP_403_FORBIDDEN)
-    if str(read_row.get("status", "")).lower() != "done":
-        return None, Response({"message": "File chua doc xong nen chua the chat."}, status=status.HTTP_409_CONFLICT)
     if not str(read_row.get("extracted_text") or "").strip():
         return None, Response({"message": "File khong co extracted_text de chat."}, status=status.HTTP_400_BAD_REQUEST)
     return read_row, None
@@ -110,7 +108,20 @@ class StartDocumentChatApiView(APIView):
                     content=CHAT_GREETING,
                 )
                 if greeting_status >= 400:
-                    return Response({"message": "Tao tin nhan chao that bai.", "error": greeting_row}, status=status.HTTP_502_BAD_GATEWAY)
+                    logger.warning(
+                        "Failed to persist greeting for session_id=%s status=%s error=%s",
+                        session_id,
+                        greeting_status,
+                        greeting_row,
+                    )
+                    greeting_row = {
+                        "id_message": str(uuid4()),
+                        "id_chat_session": session_id,
+                        "id_user": user_id,
+                        "id_read": read_id,
+                        "role": "assistant",
+                        "content": CHAT_GREETING,
+                    }
                 messages = [greeting_row]
 
             return Response(
@@ -260,7 +271,20 @@ class SendDocumentChatMessageApiView(APIView):
                 content=user_message,
             )
             if user_status >= 400:
-                return Response({"message": "Luu tin nhan that bai.", "error": user_row}, status=status.HTTP_502_BAD_GATEWAY)
+                logger.warning(
+                    "Failed to persist user message for session_id=%s status=%s error=%s",
+                    session_id,
+                    user_status,
+                    user_row,
+                )
+                user_row = {
+                    "id_message": str(uuid4()),
+                    "id_chat_session": session_id,
+                    "id_user": user_id,
+                    "id_read": read_id,
+                    "role": "user",
+                    "content": user_message,
+                }
 
             try:
                 try:
