@@ -130,18 +130,41 @@ Hay tra loi nhu StudyBuddy AI: than thien, ro rang, dung tai lieu, khong bia dat
         "top_p": 0.9,
         "max_tokens": 700,
     }
-    response_payload = _post_groq_with_retry(
-        base_url=base_url,
-        api_key=api_key,
-        models=models,
-        payload=payload,
-        timeout=timeout,
-    )
+    try:
+        response_payload = _post_groq_with_retry(
+            base_url=base_url,
+            api_key=api_key,
+            models=models,
+            payload=payload,
+            timeout=timeout,
+        )
+        text = _extract_groq_text(response_payload).strip()
+        if text:
+            return text
+    except AiChatTemporaryError as exc:
+        return _fallback_chat_reply(
+            source_text=source,
+            file_name=file_name,
+            history=history,
+            context_chunks=context_chunks,
+            reason=exc.public_message,
+        )
+    except AiChatError as exc:
+        return _fallback_chat_reply(
+            source_text=source,
+            file_name=file_name,
+            history=history,
+            context_chunks=context_chunks,
+            reason=exc.public_message,
+        )
 
-    text = _extract_groq_text(response_payload).strip()
-    if not text:
-        raise AiChatError("AI chua tao duoc cau tra loi, vui long thu lai.")
-    return text
+    return _fallback_chat_reply(
+        source_text=source,
+        file_name=file_name,
+        history=history,
+        context_chunks=context_chunks,
+        reason="AI chua tao duoc cau tra loi, vui long thu lai.",
+    )
 
 
 def _chat_model_candidates() -> List[str]:
@@ -234,3 +257,41 @@ def _extract_groq_text(payload: Dict[str, Any]) -> str:
         raise AiChatError("AI chua tao duoc cau tra loi, vui long thu lai.")
     message = (choices[0] or {}).get("message") if isinstance(choices[0], dict) else {}
     return str((message or {}).get("content") or "").strip()
+
+
+def _fallback_chat_reply(
+    *,
+    source_text: str,
+    file_name: str,
+    history: List[Dict[str, Any]],
+    context_chunks: List[Dict[str, Any]],
+    reason: str,
+) -> str:
+    pieces: List[str] = []
+    if context_chunks:
+        for chunk in context_chunks[:3]:
+            content = str(chunk.get("content") or "").strip()
+            if content:
+                pieces.append(content)
+    if not pieces and source_text.strip():
+        pieces = [source_text.strip()[:1200]]
+
+    excerpt = "\n".join(f"- {text[:320]}" for text in pieces[:3]).strip()
+    if not excerpt:
+        excerpt = "Mình chưa trích được đủ nội dung liên quan từ tài liệu."
+
+    recent_q = ""
+    for item in reversed(history):
+        if str(item.get("role") or "").lower() == "user":
+            recent_q = str(item.get("content") or "").strip()
+            if recent_q:
+                break
+
+    lead = f"Trong tài liệu {file_name or 'này'}, mình thấy phần liên quan nhất là:"
+    if recent_q:
+        lead = f"Với câu hỏi \"{recent_q}\", trong tài liệu {file_name or 'này'} mình thấy phần liên quan nhất là:"
+
+    tail = "Bạn có thể gửi thêm một câu hỏi cụ thể hơn để mình khoanh đúng đoạn cần xem."
+    if reason:
+        tail = f"{tail} (Tạm thời AI đang quá tải, nên mình trả lời bằng nội dung tài liệu.)"
+    return f"{lead}\n{excerpt}\n\n{tail}".strip()
