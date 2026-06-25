@@ -72,9 +72,9 @@ def generate_document_chat_reply(
     user_message: str,
     context_chunks: List[Dict[str, Any]] = None,
 ) -> str:
-    api_key = str(getattr(settings, "GEMINI_API_KEY", "") or "").strip()
+    api_key = str(getattr(settings, "GROQ_API_KEY", "") or "").strip()
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY chua duoc cau hinh.")
+        raise RuntimeError("GROQ_API_KEY chua duoc cau hinh.")
 
     source = (source_text or "").strip()
     if not source:

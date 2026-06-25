@@ -199,9 +199,9 @@ def get_or_create_document_summary(
 
 
 def generate_document_summary(*, source_text: str, file_name: str) -> Dict[str, Any]:
-    api_key = str(getattr(settings, "GEMINI_API_KEY", "") or "").strip()
+    api_key = str(getattr(settings, "GROQ_API_KEY", "") or "").strip()
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY chua duoc cau hinh.")
+        raise RuntimeError("GROQ_API_KEY chua duoc cau hinh.")
 
     sampled_text = _sample_document_text(source_text)
     if not sampled_text:
@@ -229,25 +229,33 @@ Noi dung tai lieu:
 {sampled_text}
 """.strip()
 
-    base_url = str(getattr(settings, "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")).rstrip("/")
-    model = str(getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash").strip()
-    timeout = int(getattr(settings, "GEMINI_TIMEOUT_SECONDS", 120))
+    base_url = str(getattr(settings, "GROQ_BASE_URL", "https://api.groq.com/openai/v1")).rstrip("/")
+    model = str(getattr(settings, "GROQ_MODEL", "llama-3.3-70b-versatile") or "llama-3.3-70b-versatile").strip()
+    timeout = int(getattr(settings, "GROQ_TIMEOUT_SECONDS", 120))
     response = requests.post(
-        f"{base_url}/models/{model}:generateContent",
-        params={"key": api_key},
+        f"{base_url}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         json={
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.15,
-                "responseMimeType": "application/json",
-            },
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "Ban la cong cu tom tat tai lieu bang tieng Viet. Tra ve JSON thuan, khong markdown.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.15,
+            "response_format": {"type": "json_object"},
         },
         timeout=timeout,
     )
     if response.status_code >= 400:
-        raise RuntimeError(f"Gemini summary loi {response.status_code}: {response.text[:500]}")
+        raise RuntimeError(f"Groq summary loi {response.status_code}: {response.text[:500]}")
 
-    raw_text = _extract_gemini_text(response.json())
+    raw_text = _extract_groq_text(response.json())
     parsed = _parse_json(raw_text)
     summary = str(parsed.get("summary") or "").strip() if isinstance(parsed, dict) else ""
     raw_points = parsed.get("key_points") if isinstance(parsed, dict) else []
@@ -376,14 +384,14 @@ def _task_chunk_count(purpose: str) -> int:
     return int(getattr(settings, "RAG_MATCH_LIMIT", 5))
 
 
-def _extract_gemini_text(payload: Dict[str, Any]) -> str:
-    candidates = payload.get("candidates") if isinstance(payload, dict) else None
-    if not candidates:
-        raise RuntimeError("Gemini khong tra ve candidates.")
-    parts = (((candidates[0] or {}).get("content") or {}).get("parts") or [])
-    text = "\n".join(str(part.get("text") or "") for part in parts if isinstance(part, dict)).strip()
+def _extract_groq_text(payload: Dict[str, Any]) -> str:
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    if not choices:
+        raise RuntimeError("Groq khong tra ve choices.")
+    message = (choices[0] or {}).get("message") if isinstance(choices[0], dict) else {}
+    text = str((message or {}).get("content") or "").strip()
     if not text:
-        raise RuntimeError("Gemini tra ve noi dung rong.")
+        raise RuntimeError("Groq tra ve noi dung rong.")
     return text
 
 
