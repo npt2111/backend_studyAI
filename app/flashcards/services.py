@@ -81,9 +81,53 @@ def generate_flashcards(
     max_chars = int(getattr(settings, "QUIZ_SOURCE_MAX_CHARS", 16000))
     source = source[:max_chars]
 
+    target_count = int(card_count)
+    batch_size = max(5, min(int(getattr(settings, "AI_GENERATION_BATCH_SIZE", 10)), 10))
+    cards: List[Dict[str, Any]] = []
+    raw_responses: List[str] = []
+    attempts = 0
+    max_attempts = max(4, (target_count // batch_size + 1) * 3)
+
+    while len(cards) < target_count and attempts < max_attempts:
+        attempts += 1
+        batch_count = min(batch_size, target_count - len(cards))
+        try:
+            result = _generate_flashcard_batch(
+                api_key=api_key,
+                source=source,
+                difficulty=difficulty,
+                card_count=batch_count,
+                target_count=target_count,
+                existing_cards=cards,
+            )
+        except Exception:
+            continue
+        raw_responses.append(result["raw_response"])
+        cards = _merge_unique_cards(cards, result["cards"], target_count=target_count)
+
+    if len(cards) != target_count:
+        raise RuntimeError(f"Groq tao {len(cards)}/{target_count} flashcard hop le.")
+
+    return {
+        "cards": _renumber_cards(cards),
+        "raw_response": "\n\n---BATCH---\n\n".join(raw_responses),
+    }
+
+
+def _generate_flashcard_batch(
+    *,
+    api_key: str,
+    source: str,
+    difficulty: str,
+    card_count: int,
+    target_count: int,
+    existing_cards: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    existing_text = _existing_cards_text(existing_cards)
     user_prompt = f"""
 Do kho: {difficulty}
-So the: {card_count}
+So the can tao trong lan nay: {card_count}
+Tong so the muc tieu: {target_count}
 
 Yeu cau:
 - Tra ve dung schema:
@@ -94,6 +138,9 @@ Yeu cau:
 - Noi dung front/back viet bang tieng Viet.
 - Moi the hoc mot y khac nhau; khong lap lai cau hoi, khong lap lai cung mot y bang cach doi tu ngu nhe.
 - Khong bia dat thong tin ngoai tai lieu. Neu tai lieu khong du thong tin, tao the o muc tong quat nhung van phai dua tren noi dung co trong tai lieu.
+
+Nhung the da co, khong duoc lap lai:
+{existing_text}
 
 Tai lieu:
 {source}
@@ -107,6 +154,7 @@ Tai lieu:
         ],
         "temperature": 0.2,
         "top_p": 0.9,
+        "max_tokens": _flashcard_max_tokens(card_count=card_count),
         "response_format": {"type": "json_object"},
     }
 
@@ -134,8 +182,6 @@ Tai lieu:
 
     parsed = _parse_json(content)
     cards = _sanitize_cards(parsed.get("cards") if isinstance(parsed, dict) else None, card_count=card_count)
-    if len(cards) != card_count:
-        raise RuntimeError(f"Groq tao {len(cards)}/{card_count} flashcard hop le.")
     return {
         "cards": cards,
         "raw_response": content,
@@ -173,3 +219,53 @@ def _sanitize_cards(raw_cards: Any, *, card_count: int) -> List[Dict[str, Any]]:
         if len(cards) == card_count:
             break
     return cards
+
+
+def _flashcard_max_tokens(*, card_count: int) -> int:
+    configured = int(getattr(settings, "FLASHCARD_MAX_OUTPUT_TOKENS", 9000))
+    needed = 700 + 260 * max(1, card_count)
+    return max(1600, min(configured, needed))
+
+
+def _existing_cards_text(cards: List[Dict[str, Any]]) -> str:
+    if not cards:
+        return "Chua co."
+    lines = []
+    for index, item in enumerate(cards[-20:], start=1):
+        front = str(item.get("front") or "").strip()
+        if front:
+            lines.append(f"{index}. {front[:220]}")
+    return "\n".join(lines) if lines else "Chua co."
+
+
+def _merge_unique_cards(
+    current: List[Dict[str, Any]],
+    incoming: List[Dict[str, Any]],
+    *,
+    target_count: int,
+) -> List[Dict[str, Any]]:
+    merged = list(current)
+    seen = {_normalize_card_key(item.get("front")) for item in merged}
+    for item in incoming:
+        key = _normalize_card_key(item.get("front"))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+        if len(merged) >= target_count:
+            break
+    return merged
+
+
+def _normalize_card_key(value: Any) -> str:
+    return re.sub(r"\W+", " ", str(value or "").lower()).strip()
+
+
+def _renumber_cards(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        {
+            **item,
+            "number": index,
+        }
+        for index, item in enumerate(cards, start=1)
+    ]

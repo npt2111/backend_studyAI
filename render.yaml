@@ -45,5 +45,11 @@ services:
         value: 8
       - key: CHAT_RAG_MATCH_THRESHOLD
         value: 0.0
+      - key: QUIZ_MAX_OUTPUT_TOKENS
+        value: 10000
+      - key: FLASHCARD_MAX_OUTPUT_TOKENS
+        value: 9000
+      - key: AI_GENERATION_BATCH_SIZE
+        value: 10
       - key: CRON_SECRET
         generateValue: true

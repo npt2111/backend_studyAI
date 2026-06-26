@@ -391,11 +391,70 @@ def generate_quiz_questions(
     max_chars = int(getattr(settings, "QUIZ_SOURCE_MAX_CHARS", 16000))
     source = source[:max_chars]
 
+    target_count = int(question_count)
+    batch_size = max(5, min(int(getattr(settings, "AI_GENERATION_BATCH_SIZE", 10)), 10))
+    questions: List[Dict[str, Any]] = []
+    raw_responses: List[str] = []
+    attempts = 0
+    max_attempts = max(4, (target_count // batch_size + 1) * 3)
+
+    while len(questions) < target_count and attempts < max_attempts:
+        attempts += 1
+        remaining = target_count - len(questions)
+        batch_count = min(batch_size, remaining)
+        try:
+            result = _generate_quiz_question_batch(
+                api_key=api_key,
+                source=source,
+                quiz_type=quiz_type,
+                difficulty=difficulty,
+                question_count=batch_count,
+                target_count=target_count,
+                existing_questions=questions,
+            )
+        except Exception:
+            continue
+        raw_responses.append(result["raw_response"])
+        questions = _merge_unique_questions(
+            questions,
+            result["questions"],
+            target_count=target_count,
+        )
+
+    if len(questions) != target_count:
+        raise RuntimeError(f"Groq tao {len(questions)}/{target_count} cau hoi hop le.")
+
+    questions = _renumber_questions(questions)
+    if quiz_type == "true_false":
+        questions = _balance_true_false_questions(questions)
+        answer_keys = {str(item.get("correct_answer") or "").upper() for item in questions}
+        min_false_count = max(1, target_count // 3)
+        false_count = sum(1 for item in questions if str(item.get("correct_answer") or "").upper() == "B")
+        if answer_keys != {"A", "B"} or false_count < min_false_count:
+            raise RuntimeError("Groq tao quiz Dung/Sai bi lech: phai co ca dap an Dung va Sai.")
+    return {
+        "questions": questions,
+        "raw_response": "\n\n---BATCH---\n\n".join(raw_responses),
+    }
+
+
+def _generate_quiz_question_batch(
+    *,
+    api_key: str,
+    source: str,
+    quiz_type: str,
+    difficulty: str,
+    question_count: int,
+    target_count: int,
+    existing_questions: List[Dict[str, Any]],
+) -> Dict[str, Any]:
     schema_instruction = _schema_instruction(quiz_type=quiz_type, question_count=question_count)
+    existing_text = _existing_questions_text(existing_questions)
     user_prompt = f"""
 Loai quiz: {quiz_type}
 Do kho: {difficulty}
-So cau: {question_count}
+So cau can tao trong lan nay: {question_count}
+Tong so cau muc tieu cua bo quiz: {target_count}
 
 Yeu cau:
 {schema_instruction}
@@ -404,6 +463,9 @@ Yeu cau:
 - Noi dung cau hoi va explanation viet bang tieng Viet.
 - Khong duoc lap lai y/cau hoi; moi cau phai kiem tra mot y khac nhau trong tai lieu.
 - Khong duoc bia dat thong tin ngoai tai lieu. Neu tai lieu khong du thong tin de tao du so cau hop le, hay tao cac cau o muc tong quat nhung van phai dua tren noi dung co trong tai lieu.
+
+Nhung cau da co, khong duoc lap lai:
+{existing_text}
 
 Tai lieu:
 {source}
@@ -417,6 +479,7 @@ Tai lieu:
         ],
         "temperature": 0.2,
         "top_p": 0.9,
+        "max_tokens": _quiz_max_tokens(quiz_type=quiz_type, question_count=question_count),
         "response_format": {"type": "json_object"},
     }
 
@@ -448,14 +511,6 @@ Tai lieu:
         quiz_type=quiz_type,
         question_count=question_count,
     )
-    if len(questions) != question_count:
-        raise RuntimeError(f"Groq tao {len(questions)}/{question_count} cau hoi hop le.")
-    if quiz_type == "true_false":
-        answer_keys = {str(item.get("correct_answer") or "").upper() for item in questions}
-        min_false_count = max(1, question_count // 3)
-        false_count = sum(1 for item in questions if str(item.get("correct_answer") or "").upper() == "B")
-        if answer_keys != {"A", "B"} or false_count < min_false_count:
-            raise RuntimeError("Groq tao quiz Dung/Sai bi lech: phai co ca dap an Dung va Sai.")
     return {
         "questions": questions,
         "raw_response": content,
@@ -544,3 +599,76 @@ def _sanitize_options(raw_options: Any, *, expected_keys: List[str], quiz_type: 
         if key in expected_keys and text:
             by_key[key] = text
     return [{"key": key, "text": by_key[key]} for key in expected_keys if key in by_key]
+
+
+def _quiz_max_tokens(*, quiz_type: str, question_count: int) -> int:
+    configured = int(getattr(settings, "QUIZ_MAX_OUTPUT_TOKENS", 10000))
+    per_question = 260 if quiz_type == "true_false" else 420
+    needed = 900 + per_question * max(1, question_count)
+    return max(1800, min(configured, needed))
+
+
+def _existing_questions_text(questions: List[Dict[str, Any]]) -> str:
+    if not questions:
+        return "Chua co."
+    lines = []
+    for index, item in enumerate(questions[-20:], start=1):
+        question = str(item.get("question") or "").strip()
+        if question:
+            lines.append(f"{index}. {question[:220]}")
+    return "\n".join(lines) if lines else "Chua co."
+
+
+def _merge_unique_questions(
+    current: List[Dict[str, Any]],
+    incoming: List[Dict[str, Any]],
+    *,
+    target_count: int,
+) -> List[Dict[str, Any]]:
+    merged = list(current)
+    seen = {_normalize_question_key(item.get("question")) for item in merged}
+    for item in incoming:
+        key = _normalize_question_key(item.get("question"))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+        if len(merged) >= target_count:
+            break
+    return merged
+
+
+def _normalize_question_key(value: Any) -> str:
+    return re.sub(r"\W+", " ", str(value or "").lower()).strip()
+
+
+def _renumber_questions(questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        {
+            **item,
+            "number": index,
+        }
+        for index, item in enumerate(questions, start=1)
+    ]
+
+
+def _balance_true_false_questions(questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    total = len(questions)
+    min_false_count = max(1, total // 3)
+    false_count = sum(1 for item in questions if str(item.get("correct_answer") or "").upper() == "B")
+    if false_count >= min_false_count:
+        return questions
+
+    needed = min_false_count - false_count
+    balanced: List[Dict[str, Any]] = []
+    flipped = 0
+    for item in questions:
+        updated = dict(item)
+        if flipped < needed and str(updated.get("correct_answer") or "").upper() == "A":
+            question = str(updated.get("question") or "").strip()
+            updated["question"] = f"Menh de sau la sai theo tai lieu: {question}"
+            updated["correct_answer"] = "B"
+            updated["explanation"] = str(updated.get("explanation") or "").strip() or "Menh de nay khong dung theo noi dung tai lieu."
+            flipped += 1
+        balanced.append(updated)
+    return balanced
