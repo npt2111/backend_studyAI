@@ -37,7 +37,7 @@ def send_due_task_notifications() -> Dict[str, int]:
             failed += 1
             continue
 
-        title = "Den gio hoc roi"
+        title = "Đến Giờ học rồi"
         subject = (task.get("subject") or "").strip()
         task_name = (task.get("task_name") or "Ban co nhiem vu can lam").strip()
         body = f"{task_name}" + (f" - {subject}" if subject else "")
